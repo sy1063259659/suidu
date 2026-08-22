@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
-import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, KeyRound, RefreshCw, Send, ShieldCheck, Trash2, UserPlus, Users } from '@lucide/vue'
+import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, KeyRound, LogIn, RefreshCw, Send, ShieldCheck, Trash2, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NCard, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
   NList, NListItem, NPopconfirm, NSpace, NSpin, NTag, NText,
@@ -139,20 +139,19 @@ onMounted(loadSession)
   <div v-if="authLoading" class="auth-loading"><n-spin size="medium" /></div>
   <main v-else-if="!currentUser" class="auth-page">
     <div class="auth-shell">
-      <section class="auth-identity">
-        <div class="auth-mark"><ClipboardList :size="22" /></div>
-        <div class="brand auth-brand">随渡 <span>SUIDU</span></div>
-        <p class="auth-slogan">跨端内容，随手可取。</p>
+      <section class="auth-brand-panel">
+        <div class="auth-panel-top"><div class="auth-mark"><ClipboardList :size="22" /></div><span>SUIDU</span></div>
+        <div class="auth-panel-content"><h1>随渡</h1></div>
       </section>
-      <n-card class="auth-card" :bordered="false">
-        <div class="auth-card-heading"><p class="eyebrow">SUIDU ACCOUNT</p><h1>登录</h1></div>
+      <section class="auth-form-panel">
+        <div class="auth-card-heading"><h2>登录</h2></div>
         <n-alert v-if="loginError" type="error" class="auth-alert">{{ loginError }}
         </n-alert>
-        <n-input v-model:value="loginUsername" placeholder="用户名" autocomplete="username" class="auth-input" @keyup.enter="submitLogin" />
-        <n-input v-model:value="loginPassword" type="password" show-password-on="click" placeholder="密码" autocomplete="current-password" class="auth-input" @keyup.enter="submitLogin" />
-        <n-button type="primary" block :loading="loginLoading" @click="submitLogin">登录
+        <div class="auth-field"><label>用户名</label><n-input v-model:value="loginUsername" placeholder="输入用户名" autocomplete="username" class="auth-input" @keyup.enter="submitLogin" /></div>
+        <div class="auth-field"><label>密码</label><n-input v-model:value="loginPassword" type="password" show-password-on="click" placeholder="输入密码" autocomplete="current-password" class="auth-input" @keyup.enter="submitLogin" /></div>
+        <n-button type="primary" block :loading="loginLoading" @click="submitLogin"><template #icon><LogIn :size="17" /></template>登录
         </n-button>
-      </n-card>
+      </section>
     </div>
   </main>
   <n-layout v-else class="app-shell">
