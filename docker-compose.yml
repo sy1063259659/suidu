@@ -53,6 +53,7 @@ services:
 
 networks:
   suidu-network:
+    name: ${SUIDU_DOCKER_NETWORK:-suidu-network}
     external: true
 
 volumes:
