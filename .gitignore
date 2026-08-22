@@ -1,0 +1,23 @@
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+frontend/src/*.vue.js
+frontend/src/main.js
+
+# Go build output and coverage
+backend/bin/
+backend/coverage.out
+backend/*.test
+
+# Environment files and local data
+.env
+.env.*
+!.env.example
+data/
+*.local
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
