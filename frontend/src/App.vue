@@ -138,16 +138,22 @@ onMounted(loadSession)
 <template>
   <div v-if="authLoading" class="auth-loading"><n-spin size="medium" /></div>
   <main v-else-if="!currentUser" class="auth-page">
-    <n-card class="auth-card" :bordered="false">
-      <div class="brand auth-brand">随渡 <span>SUIDU</span></div>
-      <p class="eyebrow">PRIVATE CONTENT BRIDGE</p><h1>登录随渡</h1><p class="intro-copy">使用你的随渡账号访问剪贴板内容。</p>
-      <n-alert v-if="loginError" type="error" class="auth-alert">{{ loginError }}
-      </n-alert>
-      <n-input v-model:value="loginUsername" placeholder="用户名" autocomplete="username" class="auth-input" @keyup.enter="submitLogin" />
-      <n-input v-model:value="loginPassword" type="password" show-password-on="click" placeholder="密码" autocomplete="current-password" class="auth-input" @keyup.enter="submitLogin" />
-      <n-button type="primary" block :loading="loginLoading" @click="submitLogin">登录
-      </n-button>
-    </n-card>
+    <div class="auth-shell">
+      <section class="auth-identity">
+        <div class="auth-mark"><ClipboardList :size="22" /></div>
+        <div class="brand auth-brand">随渡 <span>SUIDU</span></div>
+        <p class="auth-slogan">跨端内容，随手可取。</p>
+      </section>
+      <n-card class="auth-card" :bordered="false">
+        <div class="auth-card-heading"><p class="eyebrow">SUIDU ACCOUNT</p><h1>登录</h1></div>
+        <n-alert v-if="loginError" type="error" class="auth-alert">{{ loginError }}
+        </n-alert>
+        <n-input v-model:value="loginUsername" placeholder="用户名" autocomplete="username" class="auth-input" @keyup.enter="submitLogin" />
+        <n-input v-model:value="loginPassword" type="password" show-password-on="click" placeholder="密码" autocomplete="current-password" class="auth-input" @keyup.enter="submitLogin" />
+        <n-button type="primary" block :loading="loginLoading" @click="submitLogin">登录
+        </n-button>
+      </n-card>
+    </div>
   </main>
   <n-layout v-else class="app-shell">
     <n-layout-header bordered class="app-header">
