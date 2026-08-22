@@ -10,8 +10,8 @@ services:
       SFTPGO_DATA_PROVIDER__USERNAME: ${SFTPGo_DB_USER:-sftpgo}
       SFTPGO_DATA_PROVIDER__PASSWORD: ${SFTPGo_DB_PASSWORD:?SFTPGo_DB_PASSWORD is required}
     ports:
-      - "2022:2022"
-      - "8081:8080"
+      - "127.0.0.1:12022:2022"
+      - "127.0.0.1:18082:8080"
     volumes:
       - sftpgo-data:/var/lib/sftpgo
       - suidu-files:/srv/sftpgo/data
@@ -21,6 +21,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    networks:
+      - suidu-network
   suidu-api:
     build:
       context: ./backend
@@ -30,16 +32,26 @@ services:
       SUIDU_DATABASE_URL: ${SUIDU_DATABASE_URL:?SUIDU_DATABASE_URL is required}
       SUIDU_REDIS_ADDR: ${SUIDU_REDIS_ADDR:?SUIDU_REDIS_ADDR is required}
       SUIDU_REDIS_PASSWORD: ${SUIDU_REDIS_PASSWORD:?SUIDU_REDIS_PASSWORD is required}
+      SUIDU_REDIS_DB: ${SUIDU_REDIS_DB:-5}
+      SUIDU_REDIS_KEY_PREFIX: ${SUIDU_REDIS_KEY_PREFIX:-suidu:}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:18080:8080"
+    networks:
+      - suidu-network
   suidu-web:
     build:
       context: ./frontend
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "127.0.0.1:18081:80"
     depends_on:
       - suidu-api
+    networks:
+      - suidu-network
+
+networks:
+  suidu-network:
+    external: true
 
 volumes:
   sftpgo-data:
