@@ -1,42 +1,11 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-suidu}
-      POSTGRES_USER: ${POSTGRES_USER:-suidu}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      SFTPGo_DB_NAME: ${SFTPGo_DB_NAME:-sftpgo}
-      SFTPGo_DB_USER: ${SFTPGo_DB_USER:-sftpgo}
-      SFTPGo_DB_PASSWORD: ${SFTPGo_DB_PASSWORD:?SFTPGo_DB_PASSWORD is required}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   sftpgo:
     image: drakkan/sftpgo:2.7.5
     restart: unless-stopped
     environment:
       SFTPGO_DATA_PROVIDER__DRIVER: postgresql
       SFTPGO_DATA_PROVIDER__NAME: ${SFTPGo_DB_NAME:-sftpgo}
-      SFTPGO_DATA_PROVIDER__HOST: postgres
+      SFTPGO_DATA_PROVIDER__HOST: ${SFTPGo_DB_HOST:?SFTPGo_DB_HOST is required}
       SFTPGO_DATA_PROVIDER__PORT: 5432
       SFTPGO_DATA_PROVIDER__USERNAME: ${SFTPGo_DB_USER:-sftpgo}
       SFTPGO_DATA_PROVIDER__PASSWORD: ${SFTPGo_DB_PASSWORD:?SFTPGo_DB_PASSWORD is required}
@@ -52,10 +21,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-    depends_on:
-      postgres:
-        condition: service_healthy
-
   suidu-api:
     build:
       context: ./backend
@@ -63,16 +28,10 @@ services:
     environment:
       SUIDU_PORT: 8080
       SUIDU_DATABASE_URL: ${SUIDU_DATABASE_URL:?SUIDU_DATABASE_URL is required}
-      SUIDU_REDIS_ADDR: ${SUIDU_REDIS_ADDR:-redis:6379}
+      SUIDU_REDIS_ADDR: ${SUIDU_REDIS_ADDR:?SUIDU_REDIS_ADDR is required}
       SUIDU_REDIS_PASSWORD: ${SUIDU_REDIS_PASSWORD:?SUIDU_REDIS_PASSWORD is required}
     ports:
       - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
   suidu-web:
     build:
       context: ./frontend
@@ -83,8 +42,6 @@ services:
       - suidu-api
 
 volumes:
-  postgres-data:
-  redis-data:
   sftpgo-data:
   suidu-files:
   sftpgo-backups:
