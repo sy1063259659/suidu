@@ -7,6 +7,7 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
+      selfDestroying: true,
       manifest: {
         name: '随渡 Suidu',
         short_name: '随渡',
@@ -26,4 +27,3 @@ export default defineConfig({
     },
   },
 })
-
