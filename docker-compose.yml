@@ -26,6 +26,7 @@ services:
   suidu-api:
     build:
       context: ./backend
+      dockerfile: Dockerfile.runtime
     restart: unless-stopped
     environment:
       SUIDU_PORT: 8080
@@ -41,6 +42,7 @@ services:
   suidu-web:
     build:
       context: ./frontend
+      dockerfile: Dockerfile.runtime
     restart: unless-stopped
     ports:
       - "127.0.0.1:18081:80"

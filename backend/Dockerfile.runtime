@@ -1,0 +1,8 @@
+FROM alpine:3.22
+
+RUN adduser -D -H -u 10001 suidu
+USER suidu
+COPY bin/suidu-api /usr/local/bin/suidu-api
+
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/suidu-api"]
