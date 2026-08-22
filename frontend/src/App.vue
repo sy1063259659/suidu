@@ -168,6 +168,13 @@ onMounted(loadSession)
       </n-space>
     </n-layout-header>
     <n-layout-content class="app-content">
+        <n-card v-if="passwordFormOpen" class="account-card" :bordered="false">
+          <div class="section-heading"><div><p class="eyebrow">ACCOUNT SECURITY</p><h2>修改密码</h2></div></div>
+          <n-space vertical :size="10" class="form-stack"><n-input v-model:value="currentPassword" type="password" show-password-on="click" placeholder="当前密码" autocomplete="current-password" /><n-input v-model:value="newPassword" type="password" show-password-on="click" placeholder="新密码（至少 12 位）" autocomplete="new-password" /><n-space><n-button type="primary" :loading="passwordLoading" @click="submitPasswordChange">保存新密码</n-button><n-button quaternary @click="passwordFormOpen = false">取消</n-button></n-space></n-space>
+          <n-alert v-if="passwordError" type="error" class="form-alert">{{ passwordError }}
+          </n-alert><n-alert v-if="passwordSuccess" type="success" class="form-alert">{{ passwordSuccess }}
+          </n-alert>
+        </n-card>
         <main v-if="activeView === 'admin'" class="admin-page">
           <section class="admin-hero"><div><p class="eyebrow">ADMINISTRATION</p><h1>管理中心</h1><p class="intro-copy">管理随渡账号、登录权限和日常使用身份。</p></div><n-tag type="warning" :bordered="false"><template #icon><ShieldCheck :size="14" /></template>管理员</n-tag></section>
           <section class="admin-metrics"><div class="metric-item"><Users :size="18" /><div><span>用户总数</span><strong>{{ adminUsers.length }}</strong></div></div><div class="metric-item"><UserPlus :size="18" /><div><span>普通用户</span><strong>{{ adminUsers.filter((user) => user.role === 'user').length }}</strong></div></div><div class="metric-item"><KeyRound :size="18" /><div><span>当前账号</span><strong>{{ currentUser.username }}</strong></div></div></section>
@@ -180,13 +187,6 @@ onMounted(loadSession)
           </section>
         </main>
         <main v-else class="clipboard-page">
-          <n-card v-if="passwordFormOpen" class="account-card" :bordered="false">
-            <div class="section-heading"><div><p class="eyebrow">ACCOUNT</p><h2>修改密码</h2></div></div>
-            <n-space vertical :size="10" class="form-stack"><n-input v-model:value="currentPassword" type="password" show-password-on="click" placeholder="当前密码" autocomplete="current-password" /><n-input v-model:value="newPassword" type="password" show-password-on="click" placeholder="新密码（至少 12 位）" autocomplete="new-password" /><n-space><n-button type="primary" :loading="passwordLoading" @click="submitPasswordChange">保存新密码</n-button><n-button quaternary @click="passwordFormOpen = false">取消</n-button></n-space></n-space>
-            <n-alert v-if="passwordError" type="error" class="form-alert">{{ passwordError }}
-            </n-alert><n-alert v-if="passwordSuccess" type="success" class="form-alert">{{ passwordSuccess }}
-            </n-alert>
-          </n-card>
           <section class="page-intro"><div><p class="eyebrow">TEXT CLIPBOARD</p><h1>剪贴板</h1><p class="intro-copy">在手机和电脑之间传递一段文字，提交后会保存在最近记录中。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条记录
           </n-tag></section>
           <n-card class="composer-card" :bordered="false"><n-input v-model:value="draft" type="textarea" placeholder="输入或粘贴要传递的文字..." :autosize="{ minRows: 5, maxRows: 12 }" maxlength="1048576" show-count @keydown="handleKeydown" /><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
