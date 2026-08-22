@@ -41,10 +41,10 @@ The API health endpoint is available at `http://localhost:8080/api/health`.
 
 ### Services
 
-Copy `.env.example` to `.env`, update the credentials, then start the full stack:
+Copy `.env.example` to `.env`, set the existing server's PostgreSQL and Redis addresses, then start the application containers:
 
 ```bash
 docker compose up -d --build
 ```
 
-The Compose file pins SFTPGo to a reviewed release tag; update it deliberately when upgrading.
+Create the `suidu` and `sftpgo` PostgreSQL databases and their users before the first deployment. The Compose file pins SFTPGo to a reviewed release tag; update it deliberately when upgrading.
