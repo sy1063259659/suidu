@@ -34,27 +34,28 @@ func (r *PostgresRepository) Close() {
 	r.pool.Close()
 }
 
-func (r *PostgresRepository) Create(ctx context.Context, content, source string) (Item, error) {
+func (r *PostgresRepository) Create(ctx context.Context, userID int64, content, source string) (Item, error) {
 	if err := validateContent(content); err != nil {
 		return Item{}, err
 	}
 
 	var item Item
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO clipboard_items (content, source)
-		VALUES ($1, $2)
-		RETURNING id, content, source, created_at
-	`, content, normalizeSource(source)).Scan(&item.ID, &item.Content, &item.Source, &item.CreatedAt)
+		INSERT INTO clipboard_items (user_id, content, source)
+		VALUES ($1, $2, $3)
+		RETURNING id, user_id, content, source, created_at
+	`, userID, content, normalizeSource(source)).Scan(&item.ID, &item.UserID, &item.Content, &item.Source, &item.CreatedAt)
 	return item, err
 }
 
-func (r *PostgresRepository) List(ctx context.Context, limit int) ([]Item, error) {
+func (r *PostgresRepository) List(ctx context.Context, userID int64, limit int) ([]Item, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, content, source, created_at
+		SELECT id, user_id, content, source, created_at
 		FROM clipboard_items
+		WHERE user_id = $1
 		ORDER BY created_at DESC, id DESC
-		LIMIT $1
-	`, limit)
+		LIMIT $2
+	`, userID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +64,7 @@ func (r *PostgresRepository) List(ctx context.Context, limit int) ([]Item, error
 	items := make([]Item, 0)
 	for rows.Next() {
 		var item Item
-		if err := rows.Scan(&item.ID, &item.Content, &item.Source, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Content, &item.Source, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -74,8 +75,8 @@ func (r *PostgresRepository) List(ctx context.Context, limit int) ([]Item, error
 	return items, nil
 }
 
-func (r *PostgresRepository) Delete(ctx context.Context, id int64) error {
-	result, err := r.pool.Exec(ctx, `DELETE FROM clipboard_items WHERE id = $1`, id)
+func (r *PostgresRepository) Delete(ctx context.Context, userID, id int64) error {
+	result, err := r.pool.Exec(ctx, `DELETE FROM clipboard_items WHERE user_id = $1 AND id = $2`, userID, id)
 	if err != nil {
 		return err
 	}
@@ -83,4 +84,9 @@ func (r *PostgresRepository) Delete(ctx context.Context, id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *PostgresRepository) AssignOrphanedItems(ctx context.Context, userID int64) error {
+	_, err := r.pool.Exec(ctx, `UPDATE clipboard_items SET user_id = $1 WHERE user_id IS NULL`, userID)
+	return err
 }

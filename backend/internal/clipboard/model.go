@@ -16,13 +16,14 @@ const MaxContentBytes = 1 << 20
 
 type Item struct {
 	ID        int64     `json:"id"`
+	UserID    int64     `json:"-"`
 	Content   string    `json:"content"`
 	Source    string    `json:"source"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
 type Repository interface {
-	Create(ctx context.Context, content, source string) (Item, error)
-	List(ctx context.Context, limit int) ([]Item, error)
-	Delete(ctx context.Context, id int64) error
+	Create(ctx context.Context, userID int64, content, source string) (Item, error)
+	List(ctx context.Context, userID int64, limit int) ([]Item, error)
+	Delete(ctx context.Context, userID, id int64) error
 }

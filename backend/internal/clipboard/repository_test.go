@@ -10,16 +10,16 @@ func TestMemoryRepositoryLifecycle(t *testing.T) {
 	repo := NewMemoryRepository()
 	ctx := context.Background()
 
-	first, err := repo.Create(ctx, "first", "web")
+	first, err := repo.Create(ctx, 1, "first", "web")
 	if err != nil {
 		t.Fatalf("create first: %v", err)
 	}
-	second, err := repo.Create(ctx, "second", "web")
+	second, err := repo.Create(ctx, 1, "second", "web")
 	if err != nil {
 		t.Fatalf("create second: %v", err)
 	}
 
-	items, err := repo.List(ctx, 10)
+	items, err := repo.List(ctx, 1, 10)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -27,17 +27,17 @@ func TestMemoryRepositoryLifecycle(t *testing.T) {
 		t.Fatalf("unexpected list order: %#v", items)
 	}
 
-	if err := repo.Delete(ctx, first.ID); err != nil {
+	if err := repo.Delete(ctx, 1, first.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if err := repo.Delete(ctx, first.ID); !errors.Is(err, ErrNotFound) {
+	if err := repo.Delete(ctx, 1, first.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected not found, got %v", err)
 	}
 }
 
 func TestMemoryRepositoryRejectsEmptyContent(t *testing.T) {
 	repo := NewMemoryRepository()
-	if _, err := repo.Create(context.Background(), "  \n", "web"); !errors.Is(err, ErrEmptyContent) {
+	if _, err := repo.Create(context.Background(), 1, "  \n", "web"); !errors.Is(err, ErrEmptyContent) {
 		t.Fatalf("expected empty content error, got %v", err)
 	}
 }
