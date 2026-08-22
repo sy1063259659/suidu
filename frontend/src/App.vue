@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
-import { ClipboardPaste, Copy, RefreshCw, Send, Trash2 } from '@lucide/vue'
+import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, KeyRound, RefreshCw, Send, ShieldCheck, Trash2, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NCard, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
   NList, NListItem, NPopconfirm, NSpace, NSpin, NTag, NText,
@@ -37,6 +37,7 @@ const submitting = ref(false)
 const error = ref('')
 const apiStatus = ref<'checking' | 'online' | 'offline'>('checking')
 const copiedId = ref<number | null>(null)
+const activeView = ref<'clipboard' | 'admin'>('clipboard')
 const canSubmit = computed(() => draft.value.trim().length > 0 && !submitting.value)
 const isAdmin = computed(() => currentUser.value?.role === 'admin')
 
@@ -78,7 +79,7 @@ async function submitLogin() {
 }
 
 async function submitLogout() {
-  try { await logout() } finally { currentUser.value = null; items.value = []; adminUsers.value = []; passwordFormOpen.value = false }
+  try { await logout() } finally { currentUser.value = null; items.value = []; adminUsers.value = []; passwordFormOpen.value = false; activeView.value = 'clipboard' }
 }
 
 async function submitPasswordChange() {
@@ -152,6 +153,8 @@ onMounted(loadSession)
     <n-layout-header bordered class="app-header">
       <div><div class="brand">随渡 <span>SUIDU</span></div><div class="subtitle">把文字放在随手可取的地方</div></div>
       <n-space align="center" :size="12">
+        <n-button v-if="isAdmin" :type="activeView === 'admin' ? 'primary' : 'default'" @click="activeView = activeView === 'admin' ? 'clipboard' : 'admin'"><template #icon><ShieldCheck v-if="activeView === 'clipboard'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'admin' ? '返回剪贴板' : '管理中心' }}
+        </n-button>
         <n-tag :type="isAdmin ? 'warning' : 'info'">{{ currentUser.username }} · {{ isAdmin ? '管理员' : '普通用户' }}
         </n-tag>
         <n-button quaternary @click="passwordFormOpen = !passwordFormOpen">修改密码
@@ -165,32 +168,33 @@ onMounted(loadSession)
       </n-space>
     </n-layout-header>
     <n-layout-content class="app-content">
-      <main class="clipboard-page">
-        <n-card v-if="passwordFormOpen" class="account-card" :bordered="false">
-          <div class="section-heading"><div><p class="eyebrow">ACCOUNT</p><h2>修改密码</h2></div></div>
-          <n-space vertical :size="10" class="form-stack"><n-input v-model:value="currentPassword" type="password" show-password-on="click" placeholder="当前密码" autocomplete="current-password" /><n-input v-model:value="newPassword" type="password" show-password-on="click" placeholder="新密码（至少 12 位）" autocomplete="new-password" /><n-space><n-button type="primary" :loading="passwordLoading" @click="submitPasswordChange">保存新密码</n-button><n-button quaternary @click="passwordFormOpen = false">取消</n-button></n-space></n-space>
-          <n-alert v-if="passwordError" type="error" class="form-alert">{{ passwordError }}
-          </n-alert><n-alert v-if="passwordSuccess" type="success" class="form-alert">{{ passwordSuccess }}
+        <main v-if="activeView === 'admin'" class="admin-page">
+          <section class="admin-hero"><div><p class="eyebrow">ADMINISTRATION</p><h1>管理中心</h1><p class="intro-copy">管理随渡账号、登录权限和日常使用身份。</p></div><n-tag type="warning" :bordered="false"><template #icon><ShieldCheck :size="14" /></template>管理员</n-tag></section>
+          <section class="admin-metrics"><div class="metric-item"><Users :size="18" /><div><span>用户总数</span><strong>{{ adminUsers.length }}</strong></div></div><div class="metric-item"><UserPlus :size="18" /><div><span>普通用户</span><strong>{{ adminUsers.filter((user) => user.role === 'user').length }}</strong></div></div><div class="metric-item"><KeyRound :size="18" /><div><span>当前账号</span><strong>{{ currentUser.username }}</strong></div></div></section>
+          <section class="admin-grid">
+            <div class="admin-panel create-panel"><div class="panel-heading"><div class="panel-icon"><UserPlus :size="18" /></div><div><h2>创建普通用户</h2><p>为日常使用创建一个非管理员账号。</p></div></div><n-space vertical :size="12" class="form-stack"><n-input v-model:value="newUsername" placeholder="用户名" autocomplete="off" /><n-input v-model:value="newUserPassword" type="password" show-password-on="click" placeholder="初始密码（至少 12 位）" autocomplete="new-password" /><n-button type="primary" block :disabled="!newUsername.trim() || !newUserPassword" @click="submitCreateUser"><template #icon><UserPlus :size="16" /></template>创建普通用户</n-button></n-space><n-alert v-if="adminError" type="error" class="form-alert">{{ adminError }}
+              </n-alert><n-alert v-if="adminSuccess" type="success" class="form-alert">{{ adminSuccess }}
+              </n-alert></div>
+            <div class="admin-panel users-panel"><div class="panel-heading"><div class="panel-icon"><Users :size="18" /></div><div><h2>账号列表</h2><p>重置密码或调整普通用户的访问状态。</p></div><n-button quaternary circle aria-label="刷新账号列表" title="刷新账号列表" :loading="adminLoading" @click="loadAdminUsers"><template #icon><RefreshCw :size="16" /></template></n-button></div><n-empty v-if="adminLoading && !adminUsers.length" description="正在加载账号" /><n-list v-else class="user-list" bordered><n-list-item v-for="user in adminUsers" :key="user.id"><div class="user-row"><div class="user-identity"><strong>{{ user.username }}</strong><n-tag size="small" :type="user.role === 'admin' ? 'warning' : 'info'">{{ user.role === 'admin' ? '管理员' : '普通用户' }}</n-tag><n-tag v-if="user.disabled" size="small" type="error">已停用
+                  </n-tag></div><n-space :size="4"><n-button v-if="user.role === 'user'" quaternary circle aria-label="重置密码" title="重置密码" @click="resetPasswordFor(user)"><template #icon><KeyRound :size="16" /></template></n-button><n-button v-if="user.role === 'user'" quaternary circle :aria-label="user.disabled ? '启用用户' : '停用用户'" :title="user.disabled ? '启用用户' : '停用用户'" @click="toggleUser(user)"><template #icon><ShieldCheck :size="16" /></template></n-button></n-space></div></n-list-item></n-list></div>
+          </section>
+        </main>
+        <main v-else class="clipboard-page">
+          <n-card v-if="passwordFormOpen" class="account-card" :bordered="false">
+            <div class="section-heading"><div><p class="eyebrow">ACCOUNT</p><h2>修改密码</h2></div></div>
+            <n-space vertical :size="10" class="form-stack"><n-input v-model:value="currentPassword" type="password" show-password-on="click" placeholder="当前密码" autocomplete="current-password" /><n-input v-model:value="newPassword" type="password" show-password-on="click" placeholder="新密码（至少 12 位）" autocomplete="new-password" /><n-space><n-button type="primary" :loading="passwordLoading" @click="submitPasswordChange">保存新密码</n-button><n-button quaternary @click="passwordFormOpen = false">取消</n-button></n-space></n-space>
+            <n-alert v-if="passwordError" type="error" class="form-alert">{{ passwordError }}
+            </n-alert><n-alert v-if="passwordSuccess" type="success" class="form-alert">{{ passwordSuccess }}
+            </n-alert>
+          </n-card>
+          <section class="page-intro"><div><p class="eyebrow">TEXT CLIPBOARD</p><h1>剪贴板</h1><p class="intro-copy">在手机和电脑之间传递一段文字，提交后会保存在最近记录中。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条记录
+          </n-tag></section>
+          <n-card class="composer-card" :bordered="false"><n-input v-model:value="draft" type="textarea" placeholder="输入或粘贴要传递的文字..." :autosize="{ minRows: 5, maxRows: 12 }" maxlength="1048576" show-count @keydown="handleKeydown" /><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
+          <n-alert v-if="error" type="error" closable class="error-alert" @close="error = ''">{{ error }}
           </n-alert>
-        </n-card>
-        <n-card v-if="isAdmin" class="account-card" :bordered="false">
-           <div class="section-heading"><div><p class="eyebrow">ADMINISTRATION</p><h2>用户管理</h2></div><n-button quaternary :loading="adminLoading" @click="loadAdminUsers">刷新
-          </n-button></div>
-           <n-space vertical :size="10" class="form-stack"><n-input v-model:value="newUsername" placeholder="普通用户用户名" autocomplete="off" /><n-input v-model:value="newUserPassword" type="password" show-password-on="click" placeholder="初始密码（至少 12 位）" autocomplete="new-password" /><n-button type="primary" :disabled="!newUsername.trim() || !newUserPassword" @click="submitCreateUser">创建普通用户
-          </n-button></n-space>
-           <n-alert v-if="adminError" type="error" class="form-alert">{{ adminError }}
-          </n-alert><n-alert v-if="adminSuccess" type="success" class="form-alert">{{ adminSuccess }}
-          </n-alert>
-           <n-list v-if="adminUsers.length" class="user-list" bordered><n-list-item v-for="user in adminUsers" :key="user.id"><div class="user-row"><div><strong>{{ user.username }}</strong><n-tag size="small" :type="user.role === 'admin' ? 'warning' : 'info'">{{ user.role === 'admin' ? '管理员' : '普通用户' }}</n-tag><n-tag v-if="user.disabled" size="small" type="error">已停用
-            </n-tag></div><n-space><n-button v-if="user.role === 'user'" quaternary @click="resetPasswordFor(user)">重置密码</n-button><n-button v-if="user.role === 'user'" quaternary @click="toggleUser(user)">{{ user.disabled ? '启用' : '停用' }}
-            </n-button></n-space></div></n-list-item></n-list>
-        </n-card>
-        <section class="page-intro"><div><p class="eyebrow">TEXT CLIPBOARD</p><h1>剪贴板</h1><p class="intro-copy">在手机和电脑之间传递一段文字，提交后会保存在最近记录中。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条记录</n-tag></section>
-        <n-card class="composer-card" :bordered="false"><n-input v-model:value="draft" type="textarea" placeholder="输入或粘贴要传递的文字..." :autosize="{ minRows: 5, maxRows: 12 }" maxlength="1048576" show-count @keydown="handleKeydown" /><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
-         <n-alert v-if="error" type="error" closable class="error-alert" @close="error = ''">{{ error }}
-        </n-alert>
-        <section class="history-section"><div class="section-heading"><div><p class="eyebrow">RECENT</p><h2>最近记录</h2></div><n-text depth="3">按时间倒序</n-text></div><div v-if="loading && !items.length" class="loading-state"><n-spin size="medium" /></div><n-empty v-else-if="!items.length" description="还没有剪贴板记录" class="empty-state" /><n-list v-else class="history-list" bordered><n-list-item v-for="item in items" :key="item.id"><div class="history-item"><div class="history-content">{{ item.content }}</div><div class="history-meta"><n-space :size="8" align="center"><n-tag size="small" :bordered="false">{{ item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space><n-space :size="4"><n-button quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button><n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm></n-space></div></div></n-list-item></n-list></section>
-      </main>
+          <section class="history-section"><div class="section-heading"><div><p class="eyebrow">RECENT</p><h2>最近记录</h2></div><n-text depth="3">按时间倒序
+          </n-text></div><div v-if="loading && !items.length" class="loading-state"><n-spin size="medium" /></div><n-empty v-else-if="!items.length" description="还没有剪贴板记录" class="empty-state" /><n-list v-else class="history-list" bordered><n-list-item v-for="item in items" :key="item.id"><div class="history-item"><div class="history-content">{{ item.content }}</div><div class="history-meta"><n-space :size="8" align="center"><n-tag size="small" :bordered="false">{{ item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space><n-space :size="4"><n-button quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button><n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm></n-space></div></div></n-list-item></n-list></section>
+        </main>
     </n-layout-content>
   </n-layout>
 </template>
