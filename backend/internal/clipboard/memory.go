@@ -17,7 +17,7 @@ func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{nextID: 1, items: make(map[int64]Item)}
 }
 
-func (r *MemoryRepository) Create(_ context.Context, content, source string) (Item, error) {
+func (r *MemoryRepository) Create(_ context.Context, userID int64, content, source string) (Item, error) {
 	if err := validateContent(content); err != nil {
 		return Item{}, err
 	}
@@ -27,6 +27,7 @@ func (r *MemoryRepository) Create(_ context.Context, content, source string) (It
 
 	item := Item{
 		ID:        r.nextID,
+		UserID:    userID,
 		Content:   content,
 		Source:    normalizeSource(source),
 		CreatedAt: time.Now().UTC(),
@@ -36,12 +37,15 @@ func (r *MemoryRepository) Create(_ context.Context, content, source string) (It
 	return item, nil
 }
 
-func (r *MemoryRepository) List(_ context.Context, limit int) ([]Item, error) {
+func (r *MemoryRepository) List(_ context.Context, userID int64, limit int) ([]Item, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	items := make([]Item, 0, len(r.items))
 	for _, item := range r.items {
+		if item.UserID != userID {
+			continue
+		}
 		items = append(items, item)
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -56,11 +60,12 @@ func (r *MemoryRepository) List(_ context.Context, limit int) ([]Item, error) {
 	return items, nil
 }
 
-func (r *MemoryRepository) Delete(_ context.Context, id int64) error {
+func (r *MemoryRepository) Delete(_ context.Context, userID, id int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, ok := r.items[id]; !ok {
+	item, ok := r.items[id]
+	if !ok || item.UserID != userID {
 		return ErrNotFound
 	}
 	delete(r.items, id)

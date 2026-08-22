@@ -9,11 +9,16 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sy1063259659/suidu/backend/internal/auth"
 )
 
 func newTestRouter(repo Repository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(auth.ContextUserKey, auth.User{ID: 1, Username: "tester", Role: auth.RoleUser})
+		c.Next()
+	})
 	NewHandler(repo).RegisterRoutes(router.Group("/api"))
 	return router
 }
