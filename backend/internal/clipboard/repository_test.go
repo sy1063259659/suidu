@@ -57,3 +57,9 @@ func TestMemoryRepositoryAttachmentIsolation(t *testing.T) {
 		t.Fatalf("cross-user get should be hidden, got %v", err)
 	}
 }
+
+func TestNormalizeFileNameRemovesPathsAndControls(t *testing.T) {
+	if got := normalizeFileName("../folder\\unsafe\r\nname.txt"); got != "unsafename.txt" {
+		t.Fatalf("normalized file name = %q", got)
+	}
+}

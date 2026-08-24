@@ -3,6 +3,7 @@ package clipboard
 import (
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 func validateContent(content string) error {
@@ -38,9 +39,19 @@ func normalizeFileName(value string) string {
 	if value == "" || value == "." {
 		return "file"
 	}
-	runes := []rune(value)
+	runes := []rune(strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) {
+			return -1
+		}
+		return character
+	}, value))
+	if len(runes) == 0 {
+		return "file"
+	}
 	if len(runes) > 180 {
 		value = string(runes[:180])
+	} else {
+		value = string(runes)
 	}
 	return value
 }
