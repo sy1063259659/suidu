@@ -127,11 +127,37 @@ func TestMemoryRepositoryShareOwnershipAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create share: %v", err)
 	}
+	if shares, err := repo.ListShares(t.Context(), 1, 20); err != nil || len(shares) != 0 {
+		t.Fatalf("other user's shares should be hidden: %#v, %v", shares, err)
+	}
+	if err := repo.RevokeShare(t.Context(), 1, share.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other user's revoke should be hidden, got %v", err)
+	}
 	now = now.Add(2 * time.Hour)
 	if _, err := repo.GetPublicShare(t.Context(), share.Token); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expired share should be hidden, got %v", err)
 	}
 	if shares, err := repo.ListShares(t.Context(), 2, 20); err != nil || len(shares) != 1 {
 		t.Fatalf("expired share should remain manageable: %#v, %v", shares, err)
+	}
+}
+
+func TestMemoryRepositoryDeletingItemInvalidatesShare(t *testing.T) {
+	repo := NewMemoryRepository()
+	item, err := repo.CreateText(t.Context(), 1, "temporary", "web")
+	if err != nil {
+		t.Fatalf("create text: %v", err)
+	}
+	share, err := repo.CreateShare(t.Context(), 1, CreateShareInput{
+		ItemID: item.ID, Token: "deleted", ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create share: %v", err)
+	}
+	if err := repo.Delete(t.Context(), 1, item.ID); err != nil {
+		t.Fatalf("delete item: %v", err)
+	}
+	if _, err := repo.GetPublicShare(t.Context(), share.Token); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted item share should be hidden, got %v", err)
 	}
 }
