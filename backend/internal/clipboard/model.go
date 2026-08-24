@@ -17,6 +17,7 @@ var (
 
 const (
 	MaxContentBytes = 1 << 20
+	MaxNoteRunes    = 500
 	MaxTags         = 10
 	MaxTagRunes     = 24
 )
@@ -38,6 +39,7 @@ type Item struct {
 	MediaType  string    `json:"mediaType,omitempty"`
 	SizeBytes  int64     `json:"sizeBytes,omitempty"`
 	StorageKey string    `json:"-"`
+	Note       string    `json:"note,omitempty"`
 	Source     string    `json:"source"`
 	CreatedAt  time.Time `json:"createdAt"`
 	Tags       []string  `json:"tags,omitempty"`
@@ -61,6 +63,7 @@ type ListFilter struct {
 }
 
 type ItemMetadata struct {
+	Note     string
 	Tags     []string
 	Favorite bool
 }

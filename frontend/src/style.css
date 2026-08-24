@@ -77,9 +77,11 @@ h2 { font-size: 21px; }
 .history-filter-scroll::-webkit-scrollbar { display: none; }
 .history-filter-group { white-space: nowrap; }
 .favorites-filter { flex: 0 0 auto; }
-.history-search-loading { flex: 0 0 auto; }
+.history-heading-status { display: flex; align-items: center; gap: 8px; }
+.history-loading-slot { width: 18px; height: 18px; display: grid; place-items: center; flex: 0 0 18px; }
 .history-list { overflow: hidden; border-radius: 8px; background: #fff; }
 .history-item { width: 100%; min-width: 0; }
+.item-note { margin: 12px 0 0; padding: 10px 12px; color: #526076; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; background: #f7f9fc; border-left: 3px solid #b9c9f5; border-radius: 0 8px 8px 0; }
 .history-content { white-space: pre-wrap; overflow-wrap: anywhere; color: #25344b; line-height: 1.6; }
 .attachment-content { min-width: 0; }
 .image-preview-link { display: block; width: fit-content; max-width: 100%; overflow: hidden; border-radius: 8px; background: #edf2f7; }
@@ -96,7 +98,9 @@ h2 { font-size: 21px; }
 .item-tag { cursor: pointer; }
 .item-tag:focus-visible { outline: 2px solid #2d6cdf; outline-offset: 2px; }
 .tag-modal { width: min(92vw, 520px); }
-.tag-modal-copy { margin: 0 0 18px; color: #718096; line-height: 1.6; }
+.organize-field-label { display: block; margin-bottom: 8px; color: #2d3748; font-weight: 600; }
+.tag-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 0 8px; }
+.tag-field-heading .organize-field-label { margin: 0; }
 .tag-modal-actions { margin-top: 24px; }
 .share-list { overflow: hidden; border-radius: 8px; background: #fff; }
 .share-row { width: 100%; min-width: 0; }
@@ -144,7 +148,6 @@ h2 { font-size: 21px; }
   .history-filter-scroll { width: 100%; padding-bottom: 2px; }
   .history-filter-group .n-button { min-height: 40px; }
   .favorites-filter { align-self: flex-start; min-height: 40px; }
-  .history-search-loading { align-self: center; }
   .history-meta > .n-space:last-child { flex-wrap: wrap; }
   .share-row-footer, .public-share-footer { align-items: flex-start; flex-direction: column; }
   .public-share-actions { width: 100%; }

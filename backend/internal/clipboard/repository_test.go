@@ -103,12 +103,13 @@ func TestMemoryRepositoryMetadata(t *testing.T) {
 	}
 
 	updated, err := repo.UpdateMetadata(t.Context(), 1, item.ID, ItemMetadata{
+		Note: "  上线前确认接口和数据库\r\n完成后通知团队。  ",
 		Tags: []string{" work ", "Work", "发布", ""}, Favorite: true,
 	})
 	if err != nil {
 		t.Fatalf("update metadata: %v", err)
 	}
-	if !updated.Favorite || len(updated.Tags) != 2 || updated.Tags[0] != "work" || updated.Tags[1] != "发布" {
+	if updated.Note != "上线前确认接口和数据库\n完成后通知团队。" || !updated.Favorite || len(updated.Tags) != 2 || updated.Tags[0] != "work" || updated.Tags[1] != "发布" {
 		t.Fatalf("updated metadata = %#v", updated)
 	}
 
@@ -119,11 +120,18 @@ func TestMemoryRepositoryMetadata(t *testing.T) {
 	if len(items) != 1 || items[0].ID != item.ID {
 		t.Fatalf("favorite tag results = %#v", items)
 	}
+	items, err = repo.List(t.Context(), 1, ListFilter{Limit: 10, Query: "通知团队"})
+	if err != nil || len(items) != 1 || items[0].ID != item.ID {
+		t.Fatalf("note search results = %#v, err = %v", items, err)
+	}
 	if _, err := repo.UpdateMetadata(t.Context(), 2, item.ID, ItemMetadata{Favorite: true}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("other user's update should be hidden, got %v", err)
 	}
 	if _, err := repo.UpdateMetadata(t.Context(), 1, item.ID, ItemMetadata{Tags: []string{strings.Repeat("x", MaxTagRunes+1)}}); !errors.Is(err, ErrInvalidMetadata) {
 		t.Fatalf("long tag should be rejected, got %v", err)
+	}
+	if _, err := repo.UpdateMetadata(t.Context(), 1, item.ID, ItemMetadata{Note: strings.Repeat("说", MaxNoteRunes+1)}); !errors.Is(err, ErrInvalidMetadata) {
+		t.Fatalf("long note should be rejected, got %v", err)
 	}
 }
 
