@@ -61,6 +61,12 @@ Clipboard records support text, browser-safe image previews, and arbitrary file 
 
 The API and SFTPGo share the volume through a dedicated `suidu` directory. `suidu-storage-init` only initializes its ownership and permissions before the API starts. Include both the PostgreSQL database and the `suidu-files` volume in backups and migrations.
 
+### Public sharing
+
+Any text, image, or file record can be published through an expiring `/s/<token>` link. The web UI offers 1 hour, 1 day, 7 day, and 30 day presets; the API accepts lifetimes from 5 minutes through 365 days. Share links can be reviewed from the sharing page and revoked immediately. Expired and revoked entries remain visible to their owner for auditing, but public access returns not found.
+
+A public link is a bearer credential: anyone who receives it can view the shared text, preview a browser-safe image, or download the file until expiry or revocation. Tokens contain 256 bits of randomness, responses are marked `no-store`, and deleting the source clipboard item invalidates all of its links. Avoid publishing sensitive content through channels you do not trust.
+
 ### Services
 
 Copy `.env.example` to `.env`, set the existing server's PostgreSQL and Redis addresses, then start the application containers:
