@@ -13,10 +13,22 @@ export interface ClipboardItem {
   createdAt: string
 }
 
+export interface ListClipboardOptions {
+  limit?: number
+  query?: string
+  kind?: ClipboardItemKind
+}
+
 const api = axios.create({ baseURL: '/api' })
 
-export async function listClipboard(limit = 50): Promise<ClipboardItem[]> {
-  const { data } = await api.get<{ items: ClipboardItem[] }>('/clipboard', { params: { limit } })
+export async function listClipboard(options: ListClipboardOptions = {}): Promise<ClipboardItem[]> {
+  const { data } = await api.get<{ items: ClipboardItem[] }>('/clipboard', {
+    params: {
+      limit: options.limit ?? 50,
+      q: options.query?.trim() || undefined,
+      kind: options.kind,
+    },
+  })
   return data.items
 }
 

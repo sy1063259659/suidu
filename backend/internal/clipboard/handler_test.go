@@ -64,6 +64,50 @@ func TestHandlerCreateListDelete(t *testing.T) {
 	}
 }
 
+func TestHandlerListSearchAndKindFilter(t *testing.T) {
+	repo := NewMemoryRepository()
+	if _, err := repo.CreateText(t.Context(), 1, "Alpha release note", "web"); err != nil {
+		t.Fatalf("create matching text: %v", err)
+	}
+	if _, err := repo.CreateText(t.Context(), 1, "unrelated", "web"); err != nil {
+		t.Fatalf("create unrelated text: %v", err)
+	}
+	if _, err := repo.CreateAttachment(t.Context(), 1, Attachment{
+		Kind: KindImage, FileName: "alpha.png", MediaType: "image/png", SizeBytes: 12, StorageKey: "1/alpha.png", Source: "web",
+	}); err != nil {
+		t.Fatalf("create matching image: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	newTestRouter(repo).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/clipboard?q=alpha&kind=text", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("search status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "Alpha release note") || strings.Contains(response.Body.String(), "alpha.png") || strings.Contains(response.Body.String(), "unrelated") {
+		t.Fatalf("unexpected search response: %s", response.Body.String())
+	}
+}
+
+func TestHandlerListRejectsInvalidFilters(t *testing.T) {
+	router := newTestRouter(NewMemoryRepository())
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "kind", url: "/api/clipboard?kind=video"},
+		{name: "query", url: "/api/clipboard?q=" + strings.Repeat("a", 201)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.url, nil))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestHandlerUploadDownloadAndDeleteImage(t *testing.T) {
 	repo := NewMemoryRepository()
 	files := filestore.NewMemoryStore()
