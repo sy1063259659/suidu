@@ -56,6 +56,10 @@ func TestMemoryRepositoryListFilters(t *testing.T) {
 	if _, err := repo.CreateText(ctx, 2, "alpha from another user", "web"); err != nil {
 		t.Fatalf("create other user's text: %v", err)
 	}
+	literal, err := repo.CreateText(ctx, 1, "100% ready", "web")
+	if err != nil {
+		t.Fatalf("create literal wildcard text: %v", err)
+	}
 
 	items, err := repo.List(ctx, 1, ListFilter{Limit: 10, Query: "  aLpHa  "})
 	if err != nil {
@@ -79,6 +83,14 @@ func TestMemoryRepositoryListFilters(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].ID != image.ID {
 		t.Fatalf("limited results = %#v", items)
+	}
+
+	items, err = repo.List(ctx, 1, ListFilter{Limit: 10, Query: "%"})
+	if err != nil {
+		t.Fatalf("literal search list: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != literal.ID {
+		t.Fatalf("literal search results = %#v", items)
 	}
 }
 

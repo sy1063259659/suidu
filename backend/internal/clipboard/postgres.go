@@ -87,8 +87,8 @@ func (r *PostgresRepository) List(ctx context.Context, userID int64, filter List
 		  AND ($2 = '' OR kind = $2)
 		  AND (
 			$3 = ''
-			OR COALESCE(content, '') ILIKE '%' || $3 || '%'
-			OR COALESCE(file_name, '') ILIKE '%' || $3 || '%'
+			OR strpos(lower(COALESCE(content, '')), lower($3)) > 0
+			OR strpos(lower(COALESCE(file_name, '')), lower($3)) > 0
 		  )
 		ORDER BY created_at DESC, id DESC
 		LIMIT NULLIF($4, 0)

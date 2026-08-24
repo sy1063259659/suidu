@@ -309,6 +309,8 @@ function handleKeydown(event: KeyboardEvent) { if ((event.ctrlKey || event.metaK
 
 watch([searchQuery, itemKindFilter], () => {
   if (searchTimer) window.clearTimeout(searchTimer)
+  listRequestSequence++
+  loading.value = false
   searchTimer = window.setTimeout(() => {
     if (currentUser.value && activeView.value === 'clipboard') void loadItems()
   }, 300)
@@ -412,7 +414,7 @@ onUnmounted(() => {
           </n-list>
         </main>
         <main v-else class="clipboard-page">
-          <section class="page-intro"><div><p class="eyebrow">CLIPBOARD</p><h1>剪贴板</h1><p class="intro-copy">在手机和电脑之间传递文字、图片和文件。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条记录
+          <section class="page-intro"><div><p class="eyebrow">CLIPBOARD</p><h1>剪贴板</h1><p class="intro-copy">在手机和电脑之间传递文字、图片和文件。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条{{ hasActiveFilters ? '匹配' : '记录' }}
           </n-tag></section>
           <n-card class="composer-card" :bordered="false"><n-input v-model:value="draft" type="textarea" placeholder="输入或粘贴要传递的文字..." :autosize="{ minRows: 5, maxRows: 12 }" maxlength="1048576" show-count @keydown="handleKeydown" /><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
           <n-card class="upload-card" :bordered="false">
