@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import axios from 'axios'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
+import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Tags, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
-  NAlert, NButton, NButtonGroup, NCard, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
+  NAlert, NButton, NButtonGroup, NCard, NDynamicTags, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
   NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
   type UploadCustomRequestOptions,
 } from 'naive-ui'
@@ -11,7 +11,7 @@ import {
   changePassword, createUser, getCurrentUser, listUsers, login, logout, resetUserPassword,
   setUserDisabled, type User,
 } from './api/auth'
-import { clipboardContentUrl, createClipboard, deleteClipboard, listClipboard, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
+import { clipboardContentUrl, createClipboard, deleteClipboard, listClipboard, updateClipboardMetadata, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
 import { createClipboardShare, listClipboardShares, publicShareUrl, revokeClipboardShare, type ClipboardShare } from './api/shares'
 import ClipboardItemContent from './components/ClipboardItemContent.vue'
 import PublicSharePage from './components/PublicSharePage.vue'
@@ -57,6 +57,13 @@ const shareError = ref('')
 const activeView = ref<'clipboard' | 'shares' | 'admin'>('clipboard')
 const searchQuery = ref('')
 const itemKindFilter = ref<'all' | ClipboardItemKind>('all')
+const favoritesOnly = ref(false)
+const favoriteUpdatingId = ref<number | null>(null)
+const tagModalOpen = ref(false)
+const tagItem = shallowRef<ClipboardItem | null>(null)
+const tagDraft = ref<string[]>([])
+const tagSaving = ref(false)
+const tagError = ref('')
 const itemKindOptions: Array<{ label: string; value: 'all' | ClipboardItemKind }> = [
   { label: '全部', value: 'all' },
   { label: '文本', value: 'text' },
@@ -76,7 +83,7 @@ const averageUploadProgress = computed(() => {
   const values = Object.values(uploadProgress.value)
   return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0
 })
-const hasActiveFilters = computed(() => searchQuery.value.trim() !== '' || itemKindFilter.value !== 'all')
+const hasActiveFilters = computed(() => searchQuery.value.trim() !== '' || itemKindFilter.value !== 'all' || favoritesOnly.value)
 const emptyHistoryDescription = computed(() => hasActiveFilters.value ? '没有找到匹配的记录' : '还没有剪贴板记录')
 
 let searchTimer: ReturnType<typeof window.setTimeout> | undefined
@@ -96,6 +103,7 @@ async function loadItems() {
     const result = await listClipboard({
       query: searchQuery.value,
       kind: itemKindFilter.value === 'all' ? undefined : itemKindFilter.value,
+      favoriteOnly: favoritesOnly.value,
     })
     if (requestSequence !== listRequestSequence) return
     items.value = result
@@ -141,7 +149,7 @@ async function submitLogin() {
 }
 
 async function submitLogout() {
-  try { await logout() } finally { listRequestSequence++; currentUser.value = null; items.value = []; shares.value = []; adminUsers.value = []; passwordFormOpen.value = false; activeView.value = 'clipboard' }
+  try { await logout() } finally { listRequestSequence++; currentUser.value = null; items.value = []; shares.value = []; adminUsers.value = []; passwordFormOpen.value = false; tagModalOpen.value = false; activeView.value = 'clipboard' }
 }
 
 async function submitPasswordChange() {
@@ -232,7 +240,7 @@ function uploadFile(options: UploadCustomRequestOptions) {
 }
 
 function handlePaste(event: ClipboardEvent) {
-  if (!currentUser.value || activeView.value !== 'clipboard' || shareModalOpen.value || passwordFormOpen.value) return
+  if (!currentUser.value || activeView.value !== 'clipboard' || shareModalOpen.value || tagModalOpen.value || passwordFormOpen.value) return
   const clipboard = event.clipboardData
   if (!clipboard) return
   const files = Array.from(clipboard.files)
@@ -258,6 +266,49 @@ async function copyItem(item: ClipboardItem) {
 
 async function removeItem(item: ClipboardItem) {
   try { await deleteClipboard(item.id); items.value = items.value.filter((current) => current.id !== item.id); shares.value = shares.value.filter((share) => share.item.id !== item.id) } catch (errorValue) { error.value = errorMessage(errorValue, '删除失败，请稍后重试。') }
+}
+
+function replaceItem(updated: ClipboardItem) {
+  if (favoritesOnly.value && !updated.favorite) items.value = items.value.filter((item) => item.id !== updated.id)
+  else items.value = items.value.map((item) => item.id === updated.id ? updated : item)
+  shares.value = shares.value.map((share) => share.item.id === updated.id ? { ...share, item: updated } : share)
+}
+
+async function toggleFavorite(item: ClipboardItem) {
+  if (favoriteUpdatingId.value === item.id) return
+  favoriteUpdatingId.value = item.id
+  error.value = ''
+  try {
+    replaceItem(await updateClipboardMetadata(item.id, item.tags ?? [], !item.favorite))
+  } catch (errorValue) {
+    error.value = errorMessage(errorValue, '更新收藏状态失败。')
+  } finally {
+    if (favoriteUpdatingId.value === item.id) favoriteUpdatingId.value = null
+  }
+}
+
+function openTagModal(item: ClipboardItem) {
+  tagItem.value = item
+  tagDraft.value = [...(item.tags ?? [])]
+  tagError.value = ''
+  tagModalOpen.value = true
+}
+
+async function saveTags() {
+  if (!tagItem.value || tagSaving.value) return
+  tagSaving.value = true
+  tagError.value = ''
+  try {
+    replaceItem(await updateClipboardMetadata(tagItem.value.id, tagDraft.value, Boolean(tagItem.value.favorite)))
+    if (searchQuery.value.trim()) void loadItems()
+    tagModalOpen.value = false
+  } catch (errorValue) {
+    tagError.value = errorMessage(errorValue, '保存标签失败，请检查标签长度。')
+  } finally { tagSaving.value = false }
+}
+
+function searchTag(tag: string) {
+  searchQuery.value = tag
 }
 
 function openShareModal(item: ClipboardItem) {
@@ -307,7 +358,7 @@ function refreshActiveView() {
 function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function handleKeydown(event: KeyboardEvent) { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
 
-watch([searchQuery, itemKindFilter], () => {
+watch([searchQuery, itemKindFilter, favoritesOnly], () => {
   if (searchTimer) window.clearTimeout(searchTimer)
   listRequestSequence++
   loading.value = false
@@ -433,7 +484,7 @@ onUnmounted(() => {
               <n-text depth="3">{{ hasActiveFilters ? `找到 ${items.length} 条` : '按时间倒序' }}</n-text>
             </div>
             <div class="history-toolbar">
-              <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" placeholder="搜索文本内容或文件名" aria-label="搜索剪贴板记录">
+              <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" placeholder="搜索文本、文件名或标签" aria-label="搜索剪贴板记录">
                 <template #prefix><Search :size="17" /></template>
               </n-input>
               <div class="history-filter-scroll" role="group" aria-label="按类型筛选">
@@ -443,11 +494,34 @@ onUnmounted(() => {
                   </n-button>
                 </n-button-group>
               </div>
+              <n-button class="favorites-filter" :type="favoritesOnly ? 'warning' : 'default'" :secondary="favoritesOnly" @click="favoritesOnly = !favoritesOnly">
+                <template #icon><Star :size="16" :fill="favoritesOnly ? 'currentColor' : 'none'" /></template>收藏
+              </n-button>
               <n-spin v-if="loading" size="small" class="history-search-loading" />
             </div>
             <div v-if="loading && !items.length" class="loading-state"><n-spin size="medium" /></div>
             <n-empty v-else-if="!items.length" :description="emptyHistoryDescription" class="empty-state" />
-            <n-list v-else class="history-list" bordered><n-list-item v-for="item in items" :key="item.id"><div class="history-item"><ClipboardItemContent :item="item" /><div class="history-meta"><n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space><n-space :size="4"><n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button><n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button><n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button><n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm></n-space></div></div></n-list-item></n-list>
+            <n-list v-else class="history-list" bordered>
+              <n-list-item v-for="item in items" :key="item.id">
+                <div class="history-item">
+                  <ClipboardItemContent :item="item" />
+                  <div v-if="item.tags?.length" class="item-tags" aria-label="记录标签">
+                    <n-tag v-for="tag in item.tags" :key="tag" size="small" round :bordered="false" type="info" class="item-tag" role="button" tabindex="0" @click="searchTag(tag)" @keydown.enter="searchTag(tag)">{{ tag }}</n-tag>
+                  </div>
+                  <div class="history-meta">
+                    <n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space>
+                    <n-space :size="4">
+                      <n-button quaternary circle :type="item.favorite ? 'warning' : 'default'" :loading="favoriteUpdatingId === item.id" :aria-label="item.favorite ? '取消收藏' : '收藏记录'" :title="item.favorite ? '取消收藏' : '收藏记录'" @click="toggleFavorite(item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template></n-button>
+                      <n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button>
+                      <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button>
+                      <n-button quaternary circle aria-label="编辑标签" title="编辑标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
+                      <n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button>
+                      <n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm>
+                    </n-space>
+                  </div>
+                </div>
+              </n-list-item>
+            </n-list>
           </section>
         </main>
     </n-layout-content>
@@ -464,6 +538,12 @@ onUnmounted(() => {
         <n-alert v-if="shareError" type="error" class="form-alert">{{ shareError }}</n-alert>
         <n-space justify="end" class="share-modal-actions"><n-button @click="shareModalOpen = false">取消</n-button><n-button type="primary" :loading="shareCreating" @click="submitShare"><template #icon><Share2 :size="16" /></template>生成链接</n-button></n-space>
       </template>
+    </n-modal>
+    <n-modal v-model:show="tagModalOpen" preset="card" title="编辑标签" class="tag-modal" :mask-closable="!tagSaving">
+      <p class="tag-modal-copy">用标签整理这条记录，之后可以直接搜索标签。最多 10 个，每个不超过 24 个字符。</p>
+      <n-dynamic-tags v-model:value="tagDraft" :max="10" round type="info" :input-props="{ maxlength: 24, placeholder: '输入标签' }" />
+      <n-alert v-if="tagError" type="error" class="form-alert">{{ tagError }}</n-alert>
+      <n-space justify="end" class="tag-modal-actions"><n-button :disabled="tagSaving" @click="tagModalOpen = false">取消</n-button><n-button type="primary" :loading="tagSaving" @click="saveTags">保存</n-button></n-space>
     </n-modal>
   </n-layout>
 </template>
