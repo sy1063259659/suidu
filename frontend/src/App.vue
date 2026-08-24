@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import axios from 'axios'
-import { computed, onMounted, ref, shallowRef } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Send, Share2, ShieldCheck, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NCard, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
@@ -154,30 +154,65 @@ async function submitClipboard() {
   try { const item = await createClipboard(draft.value.trim()); items.value = [item, ...items.value]; draft.value = ''; apiStatus.value = 'online' } catch { apiStatus.value = 'offline'; error.value = '提交失败，请稍后重试。' } finally { submitting.value = false }
 }
 
-function uploadFile(options: UploadCustomRequestOptions) {
-  const rawFile = options.file.file
-  if (!rawFile) { options.onError(); return }
-  if (rawFile.size > 100 * 1024 * 1024) {
-    uploadError.value = `${rawFile.name} 超过 100 MiB。`
-    options.onError()
+interface UploadCallbacks {
+  onProgress?: (percent: number) => void
+  onFinish?: () => void
+  onError?: () => void
+}
+
+async function submitFileUpload(file: File, uploadId: string, callbacks: UploadCallbacks = {}) {
+  if (file.size > 100 * 1024 * 1024) {
+    uploadError.value = `${file.name} 超过 100 MiB。`
+    callbacks.onError?.()
     return
   }
   uploadError.value = ''
-  uploadProgress.value = { ...uploadProgress.value, [options.file.id]: 0 }
-  void uploadClipboardFile(rawFile, 'web', (percent) => {
-    uploadProgress.value = { ...uploadProgress.value, [options.file.id]: percent }
-    options.onProgress({ percent })
-  }).then((item) => {
+  uploadProgress.value = { ...uploadProgress.value, [uploadId]: 0 }
+  try {
+    const item = await uploadClipboardFile(file, 'web', (percent) => {
+      uploadProgress.value = { ...uploadProgress.value, [uploadId]: percent }
+      callbacks.onProgress?.(percent)
+    })
     items.value = [item, ...items.value]
     apiStatus.value = 'online'
-    options.onFinish()
-  }).catch((errorValue) => {
-    uploadError.value = errorMessage(errorValue, `${rawFile.name} 上传失败。`)
-    options.onError()
-  }).finally(() => {
+    callbacks.onFinish?.()
+  } catch (errorValue) {
+    uploadError.value = errorMessage(errorValue, `${file.name} 上传失败。`)
+    callbacks.onError?.()
+  } finally {
     const next = { ...uploadProgress.value }
-    delete next[options.file.id]
+    delete next[uploadId]
     uploadProgress.value = next
+  }
+}
+
+function uploadFile(options: UploadCustomRequestOptions) {
+  const rawFile = options.file.file
+  if (!rawFile) { options.onError(); return }
+  void submitFileUpload(rawFile, options.file.id, {
+    onProgress: (percent) => options.onProgress({ percent }),
+    onFinish: options.onFinish,
+    onError: options.onError,
+  })
+}
+
+function handlePaste(event: ClipboardEvent) {
+  if (!currentUser.value || activeView.value !== 'clipboard' || shareModalOpen.value || passwordFormOpen.value) return
+  const clipboard = event.clipboardData
+  if (!clipboard) return
+  const files = Array.from(clipboard.files)
+  if (!files.length) {
+    for (const item of Array.from(clipboard.items)) {
+      if (item.kind !== 'file') continue
+      const file = item.getAsFile()
+      if (file) files.push(file)
+    }
+  }
+  if (!files.length) return
+  event.preventDefault()
+  const batchId = Date.now()
+  files.forEach((file, index) => {
+    void submitFileUpload(file, `paste-${batchId}-${index}`)
   })
 }
 
@@ -187,7 +222,7 @@ async function copyItem(item: ClipboardItem) {
 }
 
 async function removeItem(item: ClipboardItem) {
-  try { await deleteClipboard(item.id); items.value = items.value.filter((current) => current.id !== item.id); shares.value = shares.value.filter((share) => share.item.id !== item.id) } catch { error.value = '删除失败，请稍后重试。' }
+  try { await deleteClipboard(item.id); items.value = items.value.filter((current) => current.id !== item.id); shares.value = shares.value.filter((share) => share.item.id !== item.id) } catch (errorValue) { error.value = errorMessage(errorValue, '删除失败，请稍后重试。') }
 }
 
 function openShareModal(item: ClipboardItem) {
@@ -237,7 +272,13 @@ function refreshActiveView() {
 function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function handleKeydown(event: KeyboardEvent) { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
 
-onMounted(() => { if (!publicToken) void loadSession() })
+onMounted(() => {
+  if (!publicToken) {
+    void loadSession()
+    document.addEventListener('paste', handlePaste)
+  }
+})
+onUnmounted(() => document.removeEventListener('paste', handlePaste))
 </script>
 
 <template>
@@ -331,7 +372,7 @@ onMounted(() => { if (!publicToken) void loadSession() })
           <n-card class="composer-card" :bordered="false"><n-input v-model:value="draft" type="textarea" placeholder="输入或粘贴要传递的文字..." :autosize="{ minRows: 5, maxRows: 12 }" maxlength="1048576" show-count @keydown="handleKeydown" /><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
           <n-card class="upload-card" :bordered="false">
             <n-upload multiple :show-file-list="false" :custom-request="uploadFile">
-              <n-upload-dragger><div class="upload-drop-content"><div class="upload-icon"><UploadCloud :size="22" /></div><div><strong>上传图片或文件</strong><span>点击选择或拖到这里，单个文件不超过 100 MiB</span></div></div></n-upload-dragger>
+              <n-upload-dragger><div class="upload-drop-content"><div class="upload-icon"><UploadCloud :size="22" /></div><div><strong>上传图片或文件</strong><span>点击、拖入，或直接 Ctrl+V / ⌘V 粘贴截图，单个不超过 100 MiB</span></div></div></n-upload-dragger>
             </n-upload>
             <div v-if="uploadingCount" class="upload-status"><n-space justify="space-between"><n-text depth="3">正在上传 {{ uploadingCount }} 个文件</n-text><n-text depth="3">{{ averageUploadProgress }}%</n-text></n-space><n-progress type="line" :percentage="averageUploadProgress" :show-indicator="false" processing /></div>
           </n-card>
