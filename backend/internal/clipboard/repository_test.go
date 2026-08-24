@@ -3,6 +3,7 @@ package clipboard
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,6 +92,38 @@ func TestMemoryRepositoryListFilters(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].ID != literal.ID {
 		t.Fatalf("literal search results = %#v", items)
+	}
+}
+
+func TestMemoryRepositoryMetadata(t *testing.T) {
+	repo := NewMemoryRepository()
+	item, err := repo.CreateText(t.Context(), 1, "release checklist", "web")
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	updated, err := repo.UpdateMetadata(t.Context(), 1, item.ID, ItemMetadata{
+		Tags: []string{" work ", "Work", "发布", ""}, Favorite: true,
+	})
+	if err != nil {
+		t.Fatalf("update metadata: %v", err)
+	}
+	if !updated.Favorite || len(updated.Tags) != 2 || updated.Tags[0] != "work" || updated.Tags[1] != "发布" {
+		t.Fatalf("updated metadata = %#v", updated)
+	}
+
+	items, err := repo.List(t.Context(), 1, ListFilter{Limit: 10, Query: "发布", FavoriteOnly: true})
+	if err != nil {
+		t.Fatalf("search favorite tags: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != item.ID {
+		t.Fatalf("favorite tag results = %#v", items)
+	}
+	if _, err := repo.UpdateMetadata(t.Context(), 2, item.ID, ItemMetadata{Favorite: true}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other user's update should be hidden, got %v", err)
+	}
+	if _, err := repo.UpdateMetadata(t.Context(), 1, item.ID, ItemMetadata{Tags: []string{strings.Repeat("x", MaxTagRunes+1)}}); !errors.Is(err, ErrInvalidMetadata) {
+		t.Fatalf("long tag should be rejected, got %v", err)
 	}
 }
 

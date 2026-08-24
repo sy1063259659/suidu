@@ -89,7 +89,10 @@ func (r *MemoryRepository) List(_ context.Context, userID int64, filter ListFilt
 		if filter.Kind != "" && item.Kind != filter.Kind {
 			continue
 		}
-		if query != "" && !strings.Contains(strings.ToLower(item.Content), query) && !strings.Contains(strings.ToLower(item.FileName), query) {
+		if filter.FavoriteOnly && !item.Favorite {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(item.Content), query) && !strings.Contains(strings.ToLower(item.FileName), query) && !strings.Contains(strings.ToLower(strings.Join(item.Tags, " ")), query) {
 			continue
 		}
 		items = append(items, item)
@@ -104,6 +107,29 @@ func (r *MemoryRepository) List(_ context.Context, userID int64, filter ListFilt
 		items = items[:filter.Limit]
 	}
 	return items, nil
+}
+
+func (r *MemoryRepository) UpdateMetadata(_ context.Context, userID, id int64, metadata ItemMetadata) (Item, error) {
+	normalized, err := normalizeMetadata(metadata)
+	if err != nil {
+		return Item{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item, ok := r.items[id]
+	if !ok || item.UserID != userID {
+		return Item{}, ErrNotFound
+	}
+	item.Tags = normalized.Tags
+	item.Favorite = normalized.Favorite
+	r.items[id] = item
+	for shareID, share := range r.shares {
+		if share.Item.ID == id {
+			share.Item = item
+			r.shares[shareID] = share
+		}
+	}
+	return item, nil
 }
 
 func (r *MemoryRepository) Delete(_ context.Context, userID, id int64) error {
