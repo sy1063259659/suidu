@@ -22,3 +22,21 @@ CREATE INDEX IF NOT EXISTS idx_clipboard_items_user_created
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_items_storage_key
     ON clipboard_items (storage_key)
     WHERE storage_key <> '';
+
+CREATE TABLE IF NOT EXISTS clipboard_shares (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    item_id BIGINT NOT NULL REFERENCES clipboard_items(id) ON DELETE CASCADE,
+    token VARCHAR(64) NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (expires_at > created_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_clipboard_shares_user_created
+    ON clipboard_shares (user_id, created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_clipboard_shares_active_token
+    ON clipboard_shares (token, expires_at)
+    WHERE revoked_at IS NULL;

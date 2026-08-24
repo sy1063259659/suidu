@@ -10,6 +10,7 @@ var (
 	ErrEmptyContent    = errors.New("clipboard content cannot be empty")
 	ErrContentTooLarge = errors.New("clipboard content is too large")
 	ErrInvalidFile     = errors.New("clipboard file metadata is invalid")
+	ErrInvalidShare    = errors.New("clipboard share is invalid")
 	ErrNotFound        = errors.New("clipboard item not found")
 )
 
@@ -51,4 +52,8 @@ type Repository interface {
 	Get(ctx context.Context, userID, id int64) (Item, error)
 	List(ctx context.Context, userID int64, limit int) ([]Item, error)
 	Delete(ctx context.Context, userID, id int64) error
+	CreateShare(ctx context.Context, userID int64, input CreateShareInput) (Share, error)
+	ListShares(ctx context.Context, userID int64, limit int) ([]Share, error)
+	GetPublicShare(ctx context.Context, token string) (Share, error)
+	RevokeShare(ctx context.Context, userID, id int64) error
 }
