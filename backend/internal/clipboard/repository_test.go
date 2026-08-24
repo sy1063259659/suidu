@@ -10,11 +10,11 @@ func TestMemoryRepositoryLifecycle(t *testing.T) {
 	repo := NewMemoryRepository()
 	ctx := context.Background()
 
-	first, err := repo.Create(ctx, 1, "first", "web")
+	first, err := repo.CreateText(ctx, 1, "first", "web")
 	if err != nil {
 		t.Fatalf("create first: %v", err)
 	}
-	second, err := repo.Create(ctx, 1, "second", "web")
+	second, err := repo.CreateText(ctx, 1, "second", "web")
 	if err != nil {
 		t.Fatalf("create second: %v", err)
 	}
@@ -37,7 +37,29 @@ func TestMemoryRepositoryLifecycle(t *testing.T) {
 
 func TestMemoryRepositoryRejectsEmptyContent(t *testing.T) {
 	repo := NewMemoryRepository()
-	if _, err := repo.Create(context.Background(), 1, "  \n", "web"); !errors.Is(err, ErrEmptyContent) {
+	if _, err := repo.CreateText(context.Background(), 1, "  \n", "web"); !errors.Is(err, ErrEmptyContent) {
 		t.Fatalf("expected empty content error, got %v", err)
+	}
+}
+
+func TestMemoryRepositoryAttachmentIsolation(t *testing.T) {
+	repo := NewMemoryRepository()
+	created, err := repo.CreateAttachment(context.Background(), 2, Attachment{
+		Kind: KindImage, FileName: "photo.png", MediaType: "image/png", SizeBytes: 12, StorageKey: "2/photo.png", Source: "web",
+	})
+	if err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+	if created.Kind != KindImage || created.FileName != "photo.png" || created.StorageKey == "" {
+		t.Fatalf("unexpected attachment: %#v", created)
+	}
+	if _, err := repo.Get(context.Background(), 1, created.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-user get should be hidden, got %v", err)
+	}
+}
+
+func TestNormalizeFileNameRemovesPathsAndControls(t *testing.T) {
+	if got := normalizeFileName("../folder\\unsafe\r\nname.txt"); got != "unsafename.txt" {
+		t.Fatalf("normalized file name = %q", got)
 	}
 }

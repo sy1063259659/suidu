@@ -17,7 +17,7 @@ func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{nextID: 1, items: make(map[int64]Item)}
 }
 
-func (r *MemoryRepository) Create(_ context.Context, userID int64, content, source string) (Item, error) {
+func (r *MemoryRepository) CreateText(_ context.Context, userID int64, content, source string) (Item, error) {
 	if err := validateContent(content); err != nil {
 		return Item{}, err
 	}
@@ -28,12 +28,45 @@ func (r *MemoryRepository) Create(_ context.Context, userID int64, content, sour
 	item := Item{
 		ID:        r.nextID,
 		UserID:    userID,
+		Kind:      KindText,
 		Content:   content,
 		Source:    normalizeSource(source),
 		CreatedAt: time.Now().UTC(),
 	}
 	r.nextID++
 	r.items[item.ID] = item
+	return item, nil
+}
+
+func (r *MemoryRepository) CreateAttachment(_ context.Context, userID int64, attachment Attachment) (Item, error) {
+	if err := validateAttachment(attachment); err != nil {
+		return Item{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item := Item{
+		ID:         r.nextID,
+		UserID:     userID,
+		Kind:       attachment.Kind,
+		FileName:   normalizeFileName(attachment.FileName),
+		MediaType:  attachment.MediaType,
+		SizeBytes:  attachment.SizeBytes,
+		StorageKey: attachment.StorageKey,
+		Source:     normalizeSource(attachment.Source),
+		CreatedAt:  time.Now().UTC(),
+	}
+	r.nextID++
+	r.items[item.ID] = item
+	return item, nil
+}
+
+func (r *MemoryRepository) Get(_ context.Context, userID, id int64) (Item, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	item, ok := r.items[id]
+	if !ok || item.UserID != userID {
+		return Item{}, ErrNotFound
+	}
 	return item, nil
 }
 

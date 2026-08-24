@@ -7,9 +7,18 @@ CREATE TABLE IF NOT EXISTS clipboard_items (
 );
 
 ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS user_id BIGINT;
+ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'text';
+ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS file_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS media_type VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS size_bytes BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS storage_key TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_clipboard_items_created_at
     ON clipboard_items (created_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_clipboard_items_user_created
     ON clipboard_items (user_id, created_at DESC, id DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_items_storage_key
+    ON clipboard_items (storage_key)
+    WHERE storage_key <> '';

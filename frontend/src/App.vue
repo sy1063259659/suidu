@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
-import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, KeyRound, LogIn, RefreshCw, Send, ShieldCheck, Trash2, UserPlus, Users } from '@lucide/vue'
+import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, KeyRound, LogIn, Paperclip, RefreshCw, Send, ShieldCheck, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NCard, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
-  NList, NListItem, NPopconfirm, NSpace, NSpin, NTag, NText,
+  NList, NListItem, NPopconfirm, NProgress, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
+  type UploadCustomRequestOptions,
 } from 'naive-ui'
 import {
   changePassword, createUser, getCurrentUser, listUsers, login, logout, resetUserPassword,
   setUserDisabled, type User,
 } from './api/auth'
-import { createClipboard, deleteClipboard, listClipboard, type ClipboardItem } from './api/clipboard'
+import { clipboardContentUrl, createClipboard, deleteClipboard, listClipboard, uploadClipboardFile, type ClipboardItem } from './api/clipboard'
+import ClipboardItemContent from './components/ClipboardItemContent.vue'
 
 const items = ref<ClipboardItem[]>([])
 const currentUser = ref<User | null>(null)
@@ -37,9 +39,16 @@ const submitting = ref(false)
 const error = ref('')
 const apiStatus = ref<'checking' | 'online' | 'offline'>('checking')
 const copiedId = ref<number | null>(null)
+const uploadError = ref('')
+const uploadProgress = ref<Record<string, number>>({})
 const activeView = ref<'clipboard' | 'admin'>('clipboard')
 const canSubmit = computed(() => draft.value.trim().length > 0 && !submitting.value)
 const isAdmin = computed(() => currentUser.value?.role === 'admin')
+const uploadingCount = computed(() => Object.keys(uploadProgress.value).length)
+const averageUploadProgress = computed(() => {
+  const values = Object.values(uploadProgress.value)
+  return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0
+})
 
 function errorMessage(errorValue: unknown, fallback: string) {
   if (axios.isAxiosError(errorValue) && typeof errorValue.response?.data?.error === 'string') return errorValue.response.data.error
@@ -120,9 +129,36 @@ async function submitClipboard() {
   try { const item = await createClipboard(draft.value.trim()); items.value = [item, ...items.value]; draft.value = ''; apiStatus.value = 'online' } catch { apiStatus.value = 'offline'; error.value = '提交失败，请稍后重试。' } finally { submitting.value = false }
 }
 
+function uploadFile(options: UploadCustomRequestOptions) {
+  const rawFile = options.file.file
+  if (!rawFile) { options.onError(); return }
+  if (rawFile.size > 100 * 1024 * 1024) {
+    uploadError.value = `${rawFile.name} 超过 100 MiB。`
+    options.onError()
+    return
+  }
+  uploadError.value = ''
+  uploadProgress.value = { ...uploadProgress.value, [options.file.id]: 0 }
+  void uploadClipboardFile(rawFile, 'web', (percent) => {
+    uploadProgress.value = { ...uploadProgress.value, [options.file.id]: percent }
+    options.onProgress({ percent })
+  }).then((item) => {
+    items.value = [item, ...items.value]
+    apiStatus.value = 'online'
+    options.onFinish()
+  }).catch((errorValue) => {
+    uploadError.value = errorMessage(errorValue, `${rawFile.name} 上传失败。`)
+    options.onError()
+  }).finally(() => {
+    const next = { ...uploadProgress.value }
+    delete next[options.file.id]
+    uploadProgress.value = next
+  })
+}
+
 async function copyItem(item: ClipboardItem) {
   if (!navigator.clipboard?.writeText) { error.value = '当前浏览器不支持写入剪贴板。'; return }
-  try { await navigator.clipboard.writeText(item.content); copiedId.value = item.id; window.setTimeout(() => { if (copiedId.value === item.id) copiedId.value = null }, 1600) } catch { error.value = '复制失败，请检查浏览器剪贴板权限。' }
+  try { await navigator.clipboard.writeText(item.content || ''); copiedId.value = item.id; window.setTimeout(() => { if (copiedId.value === item.id) copiedId.value = null }, 1600) } catch { error.value = '复制失败，请检查浏览器剪贴板权限。' }
 }
 
 async function removeItem(item: ClipboardItem) {
@@ -192,13 +228,21 @@ onMounted(loadSession)
           </section>
         </main>
         <main v-else class="clipboard-page">
-          <section class="page-intro"><div><p class="eyebrow">TEXT CLIPBOARD</p><h1>剪贴板</h1><p class="intro-copy">在手机和电脑之间传递一段文字，提交后会保存在最近记录中。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条记录
+          <section class="page-intro"><div><p class="eyebrow">CLIPBOARD</p><h1>剪贴板</h1><p class="intro-copy">在手机和电脑之间传递文字、图片和文件。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条记录
           </n-tag></section>
           <n-card class="composer-card" :bordered="false"><n-input v-model:value="draft" type="textarea" placeholder="输入或粘贴要传递的文字..." :autosize="{ minRows: 5, maxRows: 12 }" maxlength="1048576" show-count @keydown="handleKeydown" /><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
+          <n-card class="upload-card" :bordered="false">
+            <n-upload multiple :show-file-list="false" :custom-request="uploadFile">
+              <n-upload-dragger><div class="upload-drop-content"><div class="upload-icon"><UploadCloud :size="22" /></div><div><strong>上传图片或文件</strong><span>点击选择或拖到这里，单个文件不超过 100 MiB</span></div></div></n-upload-dragger>
+            </n-upload>
+            <div v-if="uploadingCount" class="upload-status"><n-space justify="space-between"><n-text depth="3">正在上传 {{ uploadingCount }} 个文件</n-text><n-text depth="3">{{ averageUploadProgress }}%</n-text></n-space><n-progress type="line" :percentage="averageUploadProgress" :show-indicator="false" processing /></div>
+          </n-card>
+          <n-alert v-if="uploadError" type="error" closable class="error-alert" @close="uploadError = ''">{{ uploadError }}
+          </n-alert>
           <n-alert v-if="error" type="error" closable class="error-alert" @close="error = ''">{{ error }}
           </n-alert>
           <section class="history-section"><div class="section-heading"><div><p class="eyebrow">RECENT</p><h2>最近记录</h2></div><n-text depth="3">按时间倒序
-          </n-text></div><div v-if="loading && !items.length" class="loading-state"><n-spin size="medium" /></div><n-empty v-else-if="!items.length" description="还没有剪贴板记录" class="empty-state" /><n-list v-else class="history-list" bordered><n-list-item v-for="item in items" :key="item.id"><div class="history-item"><div class="history-content">{{ item.content }}</div><div class="history-meta"><n-space :size="8" align="center"><n-tag size="small" :bordered="false">{{ item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space><n-space :size="4"><n-button quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button><n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm></n-space></div></div></n-list-item></n-list></section>
+          </n-text></div><div v-if="loading && !items.length" class="loading-state"><n-spin size="medium" /></div><n-empty v-else-if="!items.length" description="还没有剪贴板记录" class="empty-state" /><n-list v-else class="history-list" bordered><n-list-item v-for="item in items" :key="item.id"><div class="history-item"><ClipboardItemContent :item="item" /><div class="history-meta"><n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space><n-space :size="4"><n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button><n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button><n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm></n-space></div></div></n-list-item></n-list></section>
         </main>
     </n-layout-content>
   </n-layout>
