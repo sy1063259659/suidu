@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import axios from 'axios'
-import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
-import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Send, Share2, ShieldCheck, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
-  NAlert, NButton, NCard, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
+  NAlert, NButton, NButtonGroup, NCard, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
   NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
   type UploadCustomRequestOptions,
 } from 'naive-ui'
@@ -11,7 +11,7 @@ import {
   changePassword, createUser, getCurrentUser, listUsers, login, logout, resetUserPassword,
   setUserDisabled, type User,
 } from './api/auth'
-import { clipboardContentUrl, createClipboard, deleteClipboard, listClipboard, uploadClipboardFile, type ClipboardItem } from './api/clipboard'
+import { clipboardContentUrl, createClipboard, deleteClipboard, listClipboard, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
 import { createClipboardShare, listClipboardShares, publicShareUrl, revokeClipboardShare, type ClipboardShare } from './api/shares'
 import ClipboardItemContent from './components/ClipboardItemContent.vue'
 import PublicSharePage from './components/PublicSharePage.vue'
@@ -55,6 +55,14 @@ const shareTTL = ref(86400)
 const createdShare = shallowRef<ClipboardShare | null>(null)
 const shareError = ref('')
 const activeView = ref<'clipboard' | 'shares' | 'admin'>('clipboard')
+const searchQuery = ref('')
+const itemKindFilter = ref<'all' | ClipboardItemKind>('all')
+const itemKindOptions: Array<{ label: string; value: 'all' | ClipboardItemKind }> = [
+  { label: '全部', value: 'all' },
+  { label: '文本', value: 'text' },
+  { label: '图片', value: 'image' },
+  { label: '文件', value: 'file' },
+]
 const shareExpiryOptions = [
   { label: '1 小时', value: 3600 },
   { label: '1 天', value: 86400 },
@@ -68,6 +76,11 @@ const averageUploadProgress = computed(() => {
   const values = Object.values(uploadProgress.value)
   return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0
 })
+const hasActiveFilters = computed(() => searchQuery.value.trim() !== '' || itemKindFilter.value !== 'all')
+const emptyHistoryDescription = computed(() => hasActiveFilters.value ? '没有找到匹配的记录' : '还没有剪贴板记录')
+
+let searchTimer: ReturnType<typeof window.setTimeout> | undefined
+let listRequestSequence = 0
 
 function errorMessage(errorValue: unknown, fallback: string) {
   if (axios.isAxiosError(errorValue) && typeof errorValue.response?.data?.error === 'string') return errorValue.response.data.error
@@ -75,10 +88,25 @@ function errorMessage(errorValue: unknown, fallback: string) {
 }
 
 async function loadItems() {
+  const requestSequence = ++listRequestSequence
   loading.value = true
   error.value = ''
   apiStatus.value = 'checking'
-  try { items.value = await listClipboard(); apiStatus.value = 'online' } catch { apiStatus.value = 'offline'; error.value = '无法连接服务，请稍后重试。' } finally { loading.value = false }
+  try {
+    const result = await listClipboard({
+      query: searchQuery.value,
+      kind: itemKindFilter.value === 'all' ? undefined : itemKindFilter.value,
+    })
+    if (requestSequence !== listRequestSequence) return
+    items.value = result
+    apiStatus.value = 'online'
+  } catch {
+    if (requestSequence !== listRequestSequence) return
+    apiStatus.value = 'offline'
+    error.value = '无法连接服务，请稍后重试。'
+  } finally {
+    if (requestSequence === listRequestSequence) loading.value = false
+  }
 }
 
 async function loadAdminUsers() {
@@ -113,7 +141,7 @@ async function submitLogin() {
 }
 
 async function submitLogout() {
-  try { await logout() } finally { currentUser.value = null; items.value = []; shares.value = []; adminUsers.value = []; passwordFormOpen.value = false; activeView.value = 'clipboard' }
+  try { await logout() } finally { listRequestSequence++; currentUser.value = null; items.value = []; shares.value = []; adminUsers.value = []; passwordFormOpen.value = false; activeView.value = 'clipboard' }
 }
 
 async function submitPasswordChange() {
@@ -151,7 +179,13 @@ async function readClipboard() {
 async function submitClipboard() {
   if (!canSubmit.value) return
   submitting.value = true; error.value = ''
-  try { const item = await createClipboard(draft.value.trim()); items.value = [item, ...items.value]; draft.value = ''; apiStatus.value = 'online' } catch { apiStatus.value = 'offline'; error.value = '提交失败，请稍后重试。' } finally { submitting.value = false }
+  try {
+    const item = await createClipboard(draft.value.trim())
+    if (hasActiveFilters.value) void loadItems()
+    else items.value = [item, ...items.value]
+    draft.value = ''
+    apiStatus.value = 'online'
+  } catch { apiStatus.value = 'offline'; error.value = '提交失败，请稍后重试。' } finally { submitting.value = false }
 }
 
 interface UploadCallbacks {
@@ -173,7 +207,8 @@ async function submitFileUpload(file: File, uploadId: string, callbacks: UploadC
       uploadProgress.value = { ...uploadProgress.value, [uploadId]: percent }
       callbacks.onProgress?.(percent)
     })
-    items.value = [item, ...items.value]
+    if (hasActiveFilters.value) void loadItems()
+    else items.value = [item, ...items.value]
     apiStatus.value = 'online'
     callbacks.onFinish?.()
   } catch (errorValue) {
@@ -272,13 +307,23 @@ function refreshActiveView() {
 function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function handleKeydown(event: KeyboardEvent) { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
 
+watch([searchQuery, itemKindFilter], () => {
+  if (searchTimer) window.clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(() => {
+    if (currentUser.value && activeView.value === 'clipboard') void loadItems()
+  }, 300)
+})
+
 onMounted(() => {
   if (!publicToken) {
     void loadSession()
     document.addEventListener('paste', handlePaste)
   }
 })
-onUnmounted(() => document.removeEventListener('paste', handlePaste))
+onUnmounted(() => {
+  document.removeEventListener('paste', handlePaste)
+  if (searchTimer) window.clearTimeout(searchTimer)
+})
 </script>
 
 <template>
@@ -380,8 +425,28 @@ onUnmounted(() => document.removeEventListener('paste', handlePaste))
           </n-alert>
           <n-alert v-if="error" type="error" closable class="error-alert" @close="error = ''">{{ error }}
           </n-alert>
-          <section class="history-section"><div class="section-heading"><div><p class="eyebrow">RECENT</p><h2>最近记录</h2></div><n-text depth="3">按时间倒序
-          </n-text></div><div v-if="loading && !items.length" class="loading-state"><n-spin size="medium" /></div><n-empty v-else-if="!items.length" description="还没有剪贴板记录" class="empty-state" /><n-list v-else class="history-list" bordered><n-list-item v-for="item in items" :key="item.id"><div class="history-item"><ClipboardItemContent :item="item" /><div class="history-meta"><n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space><n-space :size="4"><n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button><n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button><n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button><n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm></n-space></div></div></n-list-item></n-list></section>
+          <section class="history-section">
+            <div class="section-heading">
+              <div><p class="eyebrow">HISTORY</p><h2>剪贴板记录</h2></div>
+              <n-text depth="3">{{ hasActiveFilters ? `找到 ${items.length} 条` : '按时间倒序' }}</n-text>
+            </div>
+            <div class="history-toolbar">
+              <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" placeholder="搜索文本内容或文件名" aria-label="搜索剪贴板记录">
+                <template #prefix><Search :size="17" /></template>
+              </n-input>
+              <div class="history-filter-scroll" role="group" aria-label="按类型筛选">
+                <n-button-group class="history-filter-group">
+                  <n-button v-for="option in itemKindOptions" :key="option.value" :type="itemKindFilter === option.value ? 'primary' : 'default'" :secondary="itemKindFilter === option.value" @click="itemKindFilter = option.value">
+                    {{ option.label }}
+                  </n-button>
+                </n-button-group>
+              </div>
+              <n-spin v-if="loading" size="small" class="history-search-loading" />
+            </div>
+            <div v-if="loading && !items.length" class="loading-state"><n-spin size="medium" /></div>
+            <n-empty v-else-if="!items.length" :description="emptyHistoryDescription" class="empty-state" />
+            <n-list v-else class="history-list" bordered><n-list-item v-for="item in items" :key="item.id"><div class="history-item"><ClipboardItemContent :item="item" /><div class="history-meta"><n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space><n-space :size="4"><n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button><n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button><n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button><n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm></n-space></div></div></n-list-item></n-list>
+          </section>
         </main>
     </n-layout-content>
     <n-modal v-model:show="shareModalOpen" preset="card" title="公开分享" class="share-modal">
