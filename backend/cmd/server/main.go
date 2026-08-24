@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sy1063259659/suidu/backend/internal/auth"
 	"github.com/sy1063259659/suidu/backend/internal/clipboard"
+	"github.com/sy1063259659/suidu/backend/internal/filestore"
 	"golang.org/x/term"
 )
 
@@ -41,7 +42,7 @@ func main() {
 	protected := api.Group("")
 	protected.Use(runtime.auth.RequireAuth())
 	authHandler.RegisterProtectedRoutes(protected)
-	clipboard.NewHandler(runtime.repository).RegisterRoutes(protected)
+	clipboard.NewHandler(runtime.repository, runtime.files, maxFileBytes()).RegisterRoutes(protected)
 	admin := protected.Group("/admin")
 	admin.Use(auth.RequireRole(auth.RoleAdmin))
 	authHandler.RegisterAdminRoutes(admin)
@@ -65,6 +66,7 @@ func main() {
 
 type appRuntime struct {
 	repository clipboard.Repository
+	files      filestore.Store
 	auth       *auth.Service
 }
 
@@ -75,6 +77,7 @@ func buildRuntime() (appRuntime, func()) {
 		sessions := auth.NewMemorySessionStore()
 		return appRuntime{
 				repository: clipboard.NewMemoryRepository(),
+				files:      filestore.NewMemoryStore(),
 				auth:       auth.NewService(users, sessions, sessionTTL(), cookieSecure()),
 			}, func() {
 				_ = sessions.Close()
@@ -90,6 +93,12 @@ func buildRuntime() (appRuntime, func()) {
 	}
 	repository, err := clipboard.NewPostgresRepository(ctx, databaseURL)
 	if err != nil {
+		users.Close()
+		panic(err)
+	}
+	files, err := filestore.NewLocalStore(storageRoot())
+	if err != nil {
+		repository.Close()
 		users.Close()
 		panic(err)
 	}
@@ -122,11 +131,27 @@ func buildRuntime() (appRuntime, func()) {
 		panic(err)
 	}
 	service := auth.NewService(users, sessions, sessionTTL(), cookieSecure())
-	return appRuntime{repository: repository, auth: service}, func() {
+	return appRuntime{repository: repository, files: files, auth: service}, func() {
 		_ = sessions.Close()
 		repository.Close()
 		users.Close()
 	}
+}
+
+func storageRoot() string {
+	if value := strings.TrimSpace(os.Getenv("SUIDU_STORAGE_ROOT")); value != "" {
+		return value
+	}
+	return "/var/lib/suidu/files/suidu"
+}
+
+func maxFileBytes() int64 {
+	if value := strings.TrimSpace(os.Getenv("SUIDU_MAX_FILE_BYTES")); value != "" {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return clipboard.MaxFileBytes
 }
 
 func sessionTTL() time.Duration {

@@ -1,6 +1,9 @@
 package clipboard
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 func validateContent(content string) error {
 	if strings.TrimSpace(content) == "" {
@@ -17,4 +20,27 @@ func normalizeSource(source string) string {
 		return "web"
 	}
 	return source
+}
+
+func validateAttachment(attachment Attachment) error {
+	if attachment.Kind != KindImage && attachment.Kind != KindFile {
+		return ErrInvalidFile
+	}
+	if strings.TrimSpace(attachment.FileName) == "" || strings.TrimSpace(attachment.StorageKey) == "" || attachment.SizeBytes < 0 {
+		return ErrInvalidFile
+	}
+	return nil
+}
+
+func normalizeFileName(value string) string {
+	value = strings.ReplaceAll(value, "\\", "/")
+	value = strings.TrimSpace(filepath.Base(value))
+	if value == "" || value == "." {
+		return "file"
+	}
+	runes := []rune(value)
+	if len(runes) > 180 {
+		value = string(runes[:180])
+	}
+	return value
 }
