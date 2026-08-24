@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sy1063259659/suidu/backend/internal/auth"
@@ -77,8 +78,18 @@ func (h *Handler) list(c *gin.Context) {
 		}
 		limit = parsed
 	}
+	query := strings.TrimSpace(c.Query("q"))
+	if utf8.RuneCountInString(query) > 200 {
+		writeError(c, http.StatusBadRequest, "search query must be at most 200 characters")
+		return
+	}
+	kind := Kind(c.Query("kind"))
+	if kind != "" && kind != KindText && kind != KindImage && kind != KindFile {
+		writeError(c, http.StatusBadRequest, "kind must be text, image, or file")
+		return
+	}
 
-	items, err := h.repo.List(c.Request.Context(), user.ID, ListFilter{Limit: limit})
+	items, err := h.repo.List(c.Request.Context(), user.ID, ListFilter{Limit: limit, Query: query, Kind: kind})
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, "failed to list clipboard items")
 		return
