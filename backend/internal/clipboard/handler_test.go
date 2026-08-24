@@ -2,6 +2,7 @@ package clipboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"mime"
@@ -175,6 +176,39 @@ func TestHandlerRejectsInvalidContent(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+type deleteFailStore struct {
+	filestore.Store
+	err error
+}
+
+func (s deleteFailStore) Delete(context.Context, string) error {
+	return s.err
+}
+
+func TestHandlerKeepsAttachmentWhenSourceDeleteFails(t *testing.T) {
+	repo := NewMemoryRepository()
+	baseStore := filestore.NewMemoryStore()
+	object, err := baseStore.Put(t.Context(), 1, ".png", bytes.NewReader([]byte("image")), 100)
+	if err != nil {
+		t.Fatalf("store source: %v", err)
+	}
+	item, err := repo.CreateAttachment(t.Context(), 1, Attachment{
+		Kind: KindImage, FileName: "screenshot.png", MediaType: "image/png", SizeBytes: object.Size, StorageKey: object.Key,
+	})
+	if err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+	router := newTestRouterWithStore(repo, deleteFailStore{Store: baseStore, err: errors.New("storage unavailable")}, 1, 100)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodDelete, "/api/clipboard/"+strconv.FormatInt(item.ID, 10), nil))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if _, err := repo.Get(t.Context(), 1, item.ID); err != nil {
+		t.Fatalf("metadata should remain retryable, got %v", err)
 	}
 }
 

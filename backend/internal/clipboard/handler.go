@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -395,17 +394,18 @@ func (h *Handler) delete(c *gin.Context) {
 		writeError(c, http.StatusInternalServerError, "failed to load clipboard item")
 		return
 	}
+	if item.StorageKey != "" {
+		if err := h.files.Delete(c.Request.Context(), item.StorageKey); err != nil && !errors.Is(err, filestore.ErrNotFound) {
+			writeError(c, http.StatusInternalServerError, "failed to delete clipboard source file")
+			return
+		}
+	}
 	if err := h.repo.Delete(c.Request.Context(), user.ID, id); errors.Is(err, ErrNotFound) {
 		writeError(c, http.StatusNotFound, "clipboard item not found")
 		return
 	} else if err != nil {
 		writeError(c, http.StatusInternalServerError, "failed to delete clipboard item")
 		return
-	}
-	if item.StorageKey != "" {
-		if err := h.files.Delete(c.Request.Context(), item.StorageKey); err != nil && !errors.Is(err, filestore.ErrNotFound) {
-			log.Printf("delete clipboard storage object %q: %v", item.StorageKey, err)
-		}
 	}
 	c.Status(http.StatusNoContent)
 }
