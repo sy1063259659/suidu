@@ -11,10 +11,15 @@ var (
 	ErrContentTooLarge = errors.New("clipboard content is too large")
 	ErrInvalidFile     = errors.New("clipboard file metadata is invalid")
 	ErrInvalidShare    = errors.New("clipboard share is invalid")
+	ErrInvalidMetadata = errors.New("clipboard metadata is invalid")
 	ErrNotFound        = errors.New("clipboard item not found")
 )
 
-const MaxContentBytes = 1 << 20
+const (
+	MaxContentBytes = 1 << 20
+	MaxTags         = 10
+	MaxTagRunes     = 24
+)
 
 type Kind string
 
@@ -35,6 +40,8 @@ type Item struct {
 	StorageKey string    `json:"-"`
 	Source     string    `json:"source"`
 	CreatedAt  time.Time `json:"createdAt"`
+	Tags       []string  `json:"tags,omitempty"`
+	Favorite   bool      `json:"favorite,omitempty"`
 }
 
 type Attachment struct {
@@ -47,9 +54,15 @@ type Attachment struct {
 }
 
 type ListFilter struct {
-	Limit int
-	Query string
-	Kind  Kind
+	Limit        int
+	Query        string
+	Kind         Kind
+	FavoriteOnly bool
+}
+
+type ItemMetadata struct {
+	Tags     []string
+	Favorite bool
 }
 
 type Repository interface {
@@ -57,6 +70,7 @@ type Repository interface {
 	CreateAttachment(ctx context.Context, userID int64, attachment Attachment) (Item, error)
 	Get(ctx context.Context, userID, id int64) (Item, error)
 	List(ctx context.Context, userID int64, filter ListFilter) ([]Item, error)
+	UpdateMetadata(ctx context.Context, userID, id int64, metadata ItemMetadata) (Item, error)
 	Delete(ctx context.Context, userID, id int64) error
 	CreateShare(ctx context.Context, userID int64, input CreateShareInput) (Share, error)
 	ListShares(ctx context.Context, userID int64, limit int) ([]Share, error)

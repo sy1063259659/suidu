@@ -76,6 +76,7 @@ h2 { font-size: 21px; }
 .history-filter-scroll { flex: 0 0 auto; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .history-filter-scroll::-webkit-scrollbar { display: none; }
 .history-filter-group { white-space: nowrap; }
+.favorites-filter { flex: 0 0 auto; }
 .history-search-loading { flex: 0 0 auto; }
 .history-list { overflow: hidden; border-radius: 8px; background: #fff; }
 .history-item { width: 100%; min-width: 0; }
@@ -91,6 +92,12 @@ h2 { font-size: 21px; }
 .file-attachment .attachment-details { margin-top: 0; }
 .file-icon { display: grid; flex: 0 0 44px; place-items: center; width: 44px; height: 44px; border-radius: 8px; color: #2d6cdf; background: #eaf1ff; }
 .history-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 13px; }
+.item-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
+.item-tag { cursor: pointer; }
+.item-tag:focus-visible { outline: 2px solid #2d6cdf; outline-offset: 2px; }
+.tag-modal { width: min(92vw, 520px); }
+.tag-modal-copy { margin: 0 0 18px; color: #718096; line-height: 1.6; }
+.tag-modal-actions { margin-top: 24px; }
 .share-list { overflow: hidden; border-radius: 8px; background: #fff; }
 .share-row { width: 100%; min-width: 0; }
 .share-row-heading, .share-row-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
@@ -136,7 +143,9 @@ h2 { font-size: 21px; }
   .history-search { flex-basis: auto; width: 100%; }
   .history-filter-scroll { width: 100%; padding-bottom: 2px; }
   .history-filter-group .n-button { min-height: 40px; }
+  .favorites-filter { align-self: flex-start; min-height: 40px; }
   .history-search-loading { align-self: center; }
+  .history-meta > .n-space:last-child { flex-wrap: wrap; }
   .share-row-footer, .public-share-footer { align-items: flex-start; flex-direction: column; }
   .public-share-actions { width: 100%; }
   .public-share-actions .n-button { flex: 1; }

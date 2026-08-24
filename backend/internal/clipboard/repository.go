@@ -16,6 +16,31 @@ func validateContent(content string) error {
 	return nil
 }
 
+func normalizeMetadata(metadata ItemMetadata) (ItemMetadata, error) {
+	if len(metadata.Tags) > MaxTags {
+		return ItemMetadata{}, ErrInvalidMetadata
+	}
+	normalized := make([]string, 0, len(metadata.Tags))
+	seen := make(map[string]struct{}, len(metadata.Tags))
+	for _, raw := range metadata.Tags {
+		tag := strings.TrimSpace(raw)
+		if tag == "" {
+			continue
+		}
+		if len([]rune(tag)) > MaxTagRunes || strings.IndexFunc(tag, unicode.IsControl) >= 0 {
+			return ItemMetadata{}, ErrInvalidMetadata
+		}
+		key := strings.ToLower(tag)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, tag)
+	}
+	metadata.Tags = normalized
+	return metadata, nil
+}
+
 func normalizeSource(source string) string {
 	if strings.TrimSpace(source) == "" {
 		return "web"

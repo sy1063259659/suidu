@@ -11,12 +11,15 @@ export interface ClipboardItem {
   sizeBytes?: number
   source: string
   createdAt: string
+  tags?: string[]
+  favorite?: boolean
 }
 
 export interface ListClipboardOptions {
   limit?: number
   query?: string
   kind?: ClipboardItemKind
+  favoriteOnly?: boolean
 }
 
 const api = axios.create({ baseURL: '/api' })
@@ -27,9 +30,15 @@ export async function listClipboard(options: ListClipboardOptions = {}): Promise
       limit: options.limit ?? 50,
       q: options.query?.trim() || undefined,
       kind: options.kind,
+      favorite: options.favoriteOnly ? true : undefined,
     },
   })
   return data.items
+}
+
+export async function updateClipboardMetadata(id: number, tags: string[], favorite: boolean): Promise<ClipboardItem> {
+  const { data } = await api.patch<ClipboardItem>(`/clipboard/${id}`, { tags, favorite })
+  return data
 }
 
 export async function createClipboard(content: string, source = 'web'): Promise<ClipboardItem> {

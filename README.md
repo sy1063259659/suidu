@@ -59,6 +59,12 @@ Clipboard records are isolated by user. Existing records without an owner are as
 
 Clipboard history can be searched case-insensitively by text content or file name and filtered to text, images, or other files. Search and type filtering run in the backend across the user's full history before the newest-first result limit is applied, so older matching records remain discoverable without loading every item into the browser.
 
+### Tags and favorites
+
+Each clipboard record can have up to 10 private tags, with at most 24 characters per tag. Tags are trimmed, deduplicated case-insensitively, displayed on the record, and included in clipboard search. Important records can be starred and retrieved with the favorites-only filter.
+
+Tags and favorite state are organization metadata for the signed-in owner. They are removed from public share responses and are never exposed to visitors opening a public share link.
+
 ### Clipboard files
 
 Clipboard records support text, browser-safe image previews, and arbitrary file downloads. Files are limited to 100 MiB each by default (`SUIDU_MAX_FILE_BYTES`) and are stored in the `suidu-files` Docker volume; PostgreSQL stores only their metadata. SVG and other potentially executable formats are always downloaded instead of rendered inline.
