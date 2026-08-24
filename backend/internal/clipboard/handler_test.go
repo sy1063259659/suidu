@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sy1063259659/suidu/backend/internal/auth"
@@ -175,4 +176,138 @@ func TestHandlerRejectsInvalidContent(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
+}
+
+func TestHandlerCreatesListsResolvesAndRevokesShare(t *testing.T) {
+	repo := NewMemoryRepository()
+	item, err := repo.CreateText(t.Context(), 1, "share me", "web")
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+	router := newShareTestRouter(repo, filestore.NewMemoryStore(), 1)
+
+	create := httptest.NewRequest(http.MethodPost, "/api/clipboard/"+strconv.FormatInt(item.ID, 10)+"/shares", strings.NewReader(`{"expiresInSeconds":3600}`))
+	create.Header.Set("Content-Type", "application/json")
+	createResponse := httptest.NewRecorder()
+	router.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create share = %d, %s", createResponse.Code, createResponse.Body.String())
+	}
+	var share Share
+	if err := json.Unmarshal(createResponse.Body.Bytes(), &share); err != nil {
+		t.Fatalf("decode share: %v", err)
+	}
+	if len(share.Token) != 43 || share.Item.ID != item.ID {
+		t.Fatalf("unexpected share: %#v", share)
+	}
+
+	listResponse := httptest.NewRecorder()
+	router.ServeHTTP(listResponse, httptest.NewRequest(http.MethodGet, "/api/shares", nil))
+	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), share.Token) {
+		t.Fatalf("list shares = %d, %s", listResponse.Code, listResponse.Body.String())
+	}
+
+	publicResponse := httptest.NewRecorder()
+	router.ServeHTTP(publicResponse, httptest.NewRequest(http.MethodGet, "/api/public/shares/"+share.Token, nil))
+	if publicResponse.Code != http.StatusOK || !strings.Contains(publicResponse.Body.String(), "share me") {
+		t.Fatalf("public share = %d, %s", publicResponse.Code, publicResponse.Body.String())
+	}
+	if publicResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("public cache control = %q", publicResponse.Header().Get("Cache-Control"))
+	}
+
+	revokeResponse := httptest.NewRecorder()
+	router.ServeHTTP(revokeResponse, httptest.NewRequest(http.MethodPost, "/api/shares/"+strconv.FormatInt(share.ID, 10)+"/revoke", nil))
+	if revokeResponse.Code != http.StatusNoContent {
+		t.Fatalf("revoke share = %d, %s", revokeResponse.Code, revokeResponse.Body.String())
+	}
+	publicResponse = httptest.NewRecorder()
+	router.ServeHTTP(publicResponse, httptest.NewRequest(http.MethodGet, "/api/public/shares/"+share.Token, nil))
+	if publicResponse.Code != http.StatusNotFound {
+		t.Fatalf("revoked public share = %d, %s", publicResponse.Code, publicResponse.Body.String())
+	}
+}
+
+func TestHandlerStreamsPublicSharedAttachmentWithoutAuthentication(t *testing.T) {
+	repo := NewMemoryRepository()
+	files := filestore.NewMemoryStore()
+	content := []byte("shared file")
+	object, err := files.Put(t.Context(), 2, ".txt", bytes.NewReader(content), 100)
+	if err != nil {
+		t.Fatalf("store file: %v", err)
+	}
+	item, err := repo.CreateAttachment(t.Context(), 2, Attachment{
+		Kind: KindFile, FileName: "shared.txt", MediaType: "text/plain; charset=utf-8", SizeBytes: object.Size, StorageKey: object.Key,
+	})
+	if err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+	share, err := repo.CreateShare(t.Context(), 2, CreateShareInput{ItemID: item.ID, Token: strings.Repeat("a", 43), ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatalf("create share: %v", err)
+	}
+	router := gin.New()
+	NewHandler(repo, files, 100).RegisterPublicRoutes(router.Group("/api"))
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/public/shares/"+share.Token+"/content", nil))
+	if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), content) {
+		t.Fatalf("public content = %d, %q", response.Code, response.Body.Bytes())
+	}
+	if !strings.HasPrefix(response.Header().Get("Content-Disposition"), "attachment") || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("public content headers = %#v", response.Header())
+	}
+}
+
+func TestHandlerRejectsInvalidShareRequests(t *testing.T) {
+	repo := NewMemoryRepository()
+	item, err := repo.CreateText(t.Context(), 2, "private", "web")
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+	router := newShareTestRouter(repo, filestore.NewMemoryStore(), 1)
+
+	for name, body := range map[string]string{
+		"too short": `{"expiresInSeconds":60}`,
+		"too long":  `{"expiresInSeconds":31536001}`,
+		"overflow":  `{"expiresInSeconds":9223372036854775807}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/clipboard/1/shares", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+		})
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/clipboard/"+strconv.FormatInt(item.ID, 10)+"/shares", strings.NewReader(`{"expiresInSeconds":3600}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("other-user item status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/public/shares/not-a-token", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("malformed token status = %d", response.Code)
+	}
+}
+
+func newShareTestRouter(repo Repository, files filestore.Store, userID int64) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := NewHandler(repo, files, MaxFileBytes)
+	handler.RegisterPublicRoutes(router.Group("/api"))
+	protected := router.Group("/api")
+	protected.Use(func(c *gin.Context) {
+		c.Set(auth.ContextUserKey, auth.User{ID: userID, Username: "tester", Role: auth.RoleUser})
+		c.Next()
+	})
+	handler.RegisterRoutes(protected)
+	return router
 }
