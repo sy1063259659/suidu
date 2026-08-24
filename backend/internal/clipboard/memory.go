@@ -92,7 +92,7 @@ func (r *MemoryRepository) List(_ context.Context, userID int64, filter ListFilt
 		if filter.FavoriteOnly && !item.Favorite {
 			continue
 		}
-		if query != "" && !strings.Contains(strings.ToLower(item.Content), query) && !strings.Contains(strings.ToLower(item.FileName), query) && !strings.Contains(strings.ToLower(strings.Join(item.Tags, " ")), query) {
+		if query != "" && !strings.Contains(strings.ToLower(item.Content), query) && !strings.Contains(strings.ToLower(item.FileName), query) && !strings.Contains(strings.ToLower(item.Note), query) && !strings.Contains(strings.ToLower(strings.Join(item.Tags, " ")), query) {
 			continue
 		}
 		items = append(items, item)
@@ -122,6 +122,7 @@ func (r *MemoryRepository) UpdateMetadata(_ context.Context, userID, id int64, m
 	}
 	item.Tags = normalized.Tags
 	item.Favorite = normalized.Favorite
+	item.Note = normalized.Note
 	r.items[id] = item
 	for shareID, share := range r.shares {
 		if share.Item.ID == id {

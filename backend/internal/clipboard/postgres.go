@@ -38,7 +38,7 @@ func (r *PostgresRepository) Close() {
 	r.pool.Close()
 }
 
-const itemColumns = `id, user_id, kind, content, file_name, media_type, size_bytes, storage_key, source, created_at, tags, favorite`
+const itemColumns = `id, user_id, kind, content, file_name, media_type, size_bytes, storage_key, note, source, created_at, tags, favorite`
 
 func (r *PostgresRepository) CreateText(ctx context.Context, userID int64, content, source string) (Item, error) {
 	if err := validateContent(content); err != nil {
@@ -90,6 +90,7 @@ func (r *PostgresRepository) List(ctx context.Context, userID int64, filter List
 			$4 = ''
 			OR strpos(lower(COALESCE(content, '')), lower($4)) > 0
 			OR strpos(lower(COALESCE(file_name, '')), lower($4)) > 0
+			OR strpos(lower(COALESCE(note, '')), lower($4)) > 0
 			OR strpos(lower(array_to_string(tags, ' ')), lower($4)) > 0
 		  )
 		ORDER BY created_at DESC, id DESC
@@ -115,7 +116,7 @@ func (r *PostgresRepository) List(ctx context.Context, userID int64, filter List
 }
 
 func itemDestinations(item *Item) []any {
-	return []any{&item.ID, &item.UserID, &item.Kind, &item.Content, &item.FileName, &item.MediaType, &item.SizeBytes, &item.StorageKey, &item.Source, &item.CreatedAt, &item.Tags, &item.Favorite}
+	return []any{&item.ID, &item.UserID, &item.Kind, &item.Content, &item.FileName, &item.MediaType, &item.SizeBytes, &item.StorageKey, &item.Note, &item.Source, &item.CreatedAt, &item.Tags, &item.Favorite}
 }
 
 func (r *PostgresRepository) UpdateMetadata(ctx context.Context, userID, id int64, metadata ItemMetadata) (Item, error) {
@@ -126,10 +127,10 @@ func (r *PostgresRepository) UpdateMetadata(ctx context.Context, userID, id int6
 	var item Item
 	err = r.pool.QueryRow(ctx, `
 		UPDATE clipboard_items
-		SET tags = $3, favorite = $4
+		SET note = $3, tags = $4, favorite = $5
 		WHERE user_id = $1 AND id = $2
 		RETURNING `+itemColumns+`
-	`, userID, id, normalized.Tags, normalized.Favorite).Scan(itemDestinations(&item)...)
+	`, userID, id, normalized.Note, normalized.Tags, normalized.Favorite).Scan(itemDestinations(&item)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Item{}, ErrNotFound
 	}
@@ -154,7 +155,7 @@ func (r *PostgresRepository) AssignOrphanedItems(ctx context.Context, userID int
 
 const shareItemColumns = `
 	s.id, s.user_id, s.token, s.expires_at, s.revoked_at, s.created_at,
-	i.id, i.user_id, i.kind, i.content, i.file_name, i.media_type, i.size_bytes, i.storage_key, i.source, i.created_at, i.tags, i.favorite`
+	i.id, i.user_id, i.kind, i.content, i.file_name, i.media_type, i.size_bytes, i.storage_key, i.note, i.source, i.created_at, i.tags, i.favorite`
 
 func (r *PostgresRepository) CreateShare(ctx context.Context, userID int64, input CreateShareInput) (Share, error) {
 	now := time.Now().UTC()

@@ -236,11 +236,11 @@ func TestHandlerUpdatesMetadataAndFiltersFavorites(t *testing.T) {
 	}
 	router := newTestRouter(repo)
 
-	request := httptest.NewRequest(http.MethodPatch, "/api/clipboard/"+strconv.FormatInt(item.ID, 10), strings.NewReader(`{"tags":["work","发布"],"favorite":true}`))
+	request := httptest.NewRequest(http.MethodPatch, "/api/clipboard/"+strconv.FormatInt(item.ID, 10), strings.NewReader(`{"note":"上线前逐项确认","tags":["work","发布"],"favorite":true}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"favorite":true`) || !strings.Contains(response.Body.String(), "发布") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"favorite":true`) || !strings.Contains(response.Body.String(), "发布") || !strings.Contains(response.Body.String(), "上线前逐项确认") {
 		t.Fatalf("update response = %d, %s", response.Code, response.Body.String())
 	}
 
@@ -248,6 +248,12 @@ func TestHandlerUpdatesMetadataAndFiltersFavorites(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/clipboard?favorite=true&q=发布", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "release checklist") || strings.Contains(response.Body.String(), "ordinary note") {
 		t.Fatalf("favorite list = %d, %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/clipboard?q=逐项确认", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "release checklist") {
+		t.Fatalf("note search = %d, %s", response.Code, response.Body.String())
 	}
 }
 
@@ -272,6 +278,18 @@ func TestHandlerRejectsInvalidOrUnauthorizedMetadata(t *testing.T) {
 	newTestRouter(repo).ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid metadata status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	body, err = json.Marshal(map[string]any{"note": strings.Repeat("说", MaxNoteRunes+1), "tags": []string{}, "favorite": false})
+	if err != nil {
+		t.Fatalf("encode long note: %v", err)
+	}
+	request = httptest.NewRequest(http.MethodPatch, "/api/clipboard/"+strconv.FormatInt(item.ID, 10), bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	newTestRouter(repo).ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("long note status = %d, body = %s", response.Code, response.Body.String())
 	}
 
 	request = httptest.NewRequest(http.MethodPatch, "/api/clipboard/"+strconv.FormatInt(item.ID, 10), strings.NewReader(`{"tags":[],"favorite":true}`))
@@ -322,7 +340,7 @@ func TestHandlerCreatesListsResolvesAndRevokesShare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create item: %v", err)
 	}
-	item, err = repo.UpdateMetadata(t.Context(), 1, item.ID, ItemMetadata{Tags: []string{"private-tag"}, Favorite: true})
+	item, err = repo.UpdateMetadata(t.Context(), 1, item.ID, ItemMetadata{Note: "private-note", Tags: []string{"private-tag"}, Favorite: true})
 	if err != nil {
 		t.Fatalf("organize item: %v", err)
 	}
@@ -354,7 +372,7 @@ func TestHandlerCreatesListsResolvesAndRevokesShare(t *testing.T) {
 	if publicResponse.Code != http.StatusOK || !strings.Contains(publicResponse.Body.String(), "share me") {
 		t.Fatalf("public share = %d, %s", publicResponse.Code, publicResponse.Body.String())
 	}
-	if strings.Contains(publicResponse.Body.String(), "private-tag") || strings.Contains(publicResponse.Body.String(), `"favorite"`) || strings.Contains(publicResponse.Body.String(), `"tags"`) {
+	if strings.Contains(publicResponse.Body.String(), "private-note") || strings.Contains(publicResponse.Body.String(), "private-tag") || strings.Contains(publicResponse.Body.String(), `"note"`) || strings.Contains(publicResponse.Body.String(), `"favorite"`) || strings.Contains(publicResponse.Body.String(), `"tags"`) {
 		t.Fatalf("public share leaked private organization metadata: %s", publicResponse.Body.String())
 	}
 	if publicResponse.Header().Get("Cache-Control") != "no-store" {

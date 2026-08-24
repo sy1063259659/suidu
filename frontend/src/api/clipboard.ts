@@ -11,6 +11,7 @@ export interface ClipboardItem {
   sizeBytes?: number
   source: string
   createdAt: string
+  note?: string
   tags?: string[]
   favorite?: boolean
 }
@@ -36,8 +37,8 @@ export async function listClipboard(options: ListClipboardOptions = {}): Promise
   return data.items
 }
 
-export async function updateClipboardMetadata(id: number, tags: string[], favorite: boolean): Promise<ClipboardItem> {
-  const { data } = await api.patch<ClipboardItem>(`/clipboard/${id}`, { tags, favorite })
+export async function updateClipboardMetadata(id: number, note: string, tags: string[], favorite: boolean): Promise<ClipboardItem> {
+  const { data } = await api.patch<ClipboardItem>(`/clipboard/${id}`, { note, tags, favorite })
   return data
 }
 

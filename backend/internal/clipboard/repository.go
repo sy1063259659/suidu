@@ -17,6 +17,14 @@ func validateContent(content string) error {
 }
 
 func normalizeMetadata(metadata ItemMetadata) (ItemMetadata, error) {
+	metadata.Note = strings.ReplaceAll(metadata.Note, "\r\n", "\n")
+	metadata.Note = strings.ReplaceAll(metadata.Note, "\r", "\n")
+	metadata.Note = strings.TrimSpace(metadata.Note)
+	if len([]rune(metadata.Note)) > MaxNoteRunes || strings.IndexFunc(metadata.Note, func(character rune) bool {
+		return unicode.IsControl(character) && character != '\n' && character != '\t'
+	}) >= 0 {
+		return ItemMetadata{}, ErrInvalidMetadata
+	}
 	if len(metadata.Tags) > MaxTags {
 		return ItemMetadata{}, ErrInvalidMetadata
 	}

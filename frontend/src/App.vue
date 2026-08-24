@@ -61,6 +61,7 @@ const favoritesOnly = ref(false)
 const favoriteUpdatingId = ref<number | null>(null)
 const tagModalOpen = ref(false)
 const tagItem = shallowRef<ClipboardItem | null>(null)
+const noteDraft = ref('')
 const tagDraft = ref<string[]>([])
 const tagSaving = ref(false)
 const tagError = ref('')
@@ -279,7 +280,7 @@ async function toggleFavorite(item: ClipboardItem) {
   favoriteUpdatingId.value = item.id
   error.value = ''
   try {
-    replaceItem(await updateClipboardMetadata(item.id, item.tags ?? [], !item.favorite))
+    replaceItem(await updateClipboardMetadata(item.id, item.note ?? '', item.tags ?? [], !item.favorite))
   } catch (errorValue) {
     error.value = errorMessage(errorValue, '更新收藏状态失败。')
   } finally {
@@ -289,6 +290,7 @@ async function toggleFavorite(item: ClipboardItem) {
 
 function openTagModal(item: ClipboardItem) {
   tagItem.value = item
+  noteDraft.value = item.note ?? ''
   tagDraft.value = [...(item.tags ?? [])]
   tagError.value = ''
   tagModalOpen.value = true
@@ -299,11 +301,11 @@ async function saveTags() {
   tagSaving.value = true
   tagError.value = ''
   try {
-    replaceItem(await updateClipboardMetadata(tagItem.value.id, tagDraft.value, Boolean(tagItem.value.favorite)))
+    replaceItem(await updateClipboardMetadata(tagItem.value.id, noteDraft.value, tagDraft.value, Boolean(tagItem.value.favorite)))
     if (searchQuery.value.trim()) void loadItems()
     tagModalOpen.value = false
   } catch (errorValue) {
-    tagError.value = errorMessage(errorValue, '保存标签失败，请检查标签长度。')
+    tagError.value = errorMessage(errorValue, '保存失败，请检查备注和标签长度。')
   } finally { tagSaving.value = false }
 }
 
@@ -481,10 +483,10 @@ onUnmounted(() => {
           <section class="history-section">
             <div class="section-heading">
               <div><p class="eyebrow">HISTORY</p><h2>剪贴板记录</h2></div>
-              <n-text depth="3">{{ hasActiveFilters ? `找到 ${items.length} 条` : '按时间倒序' }}</n-text>
+              <div class="history-heading-status"><span class="history-loading-slot"><n-spin v-if="loading" size="small" aria-label="正在加载记录" /></span><n-text depth="3">{{ hasActiveFilters ? `找到 ${items.length} 条` : '按时间倒序' }}</n-text></div>
             </div>
             <div class="history-toolbar">
-              <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" placeholder="搜索文本、文件名或标签" aria-label="搜索剪贴板记录">
+              <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" placeholder="搜索文本、文件名、备注或标签" aria-label="搜索剪贴板记录">
                 <template #prefix><Search :size="17" /></template>
               </n-input>
               <div class="history-filter-scroll" role="group" aria-label="按类型筛选">
@@ -497,24 +499,23 @@ onUnmounted(() => {
               <n-button class="favorites-filter" :type="favoritesOnly ? 'warning' : 'default'" :secondary="favoritesOnly" @click="favoritesOnly = !favoritesOnly">
                 <template #icon><Star :size="16" :fill="favoritesOnly ? 'currentColor' : 'none'" /></template>收藏
               </n-button>
-              <n-spin v-if="loading" size="small" class="history-search-loading" />
             </div>
-            <div v-if="loading && !items.length" class="loading-state"><n-spin size="medium" /></div>
-            <n-empty v-else-if="!items.length" :description="emptyHistoryDescription" class="empty-state" />
+            <n-empty v-if="!items.length" :description="loading ? '正在加载记录' : emptyHistoryDescription" class="empty-state" />
             <n-list v-else class="history-list" bordered>
               <n-list-item v-for="item in items" :key="item.id">
                 <div class="history-item">
                   <ClipboardItemContent :item="item" />
+                  <p v-if="item.note" class="item-note">{{ item.note }}</p>
                   <div v-if="item.tags?.length" class="item-tags" aria-label="记录标签">
                     <n-tag v-for="tag in item.tags" :key="tag" size="small" round :bordered="false" type="info" class="item-tag" role="button" tabindex="0" @click="searchTag(tag)" @keydown.enter="searchTag(tag)">{{ tag }}</n-tag>
                   </div>
                   <div class="history-meta">
                     <n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space>
                     <n-space :size="4">
-                      <n-button quaternary circle :type="item.favorite ? 'warning' : 'default'" :loading="favoriteUpdatingId === item.id" :aria-label="item.favorite ? '取消收藏' : '收藏记录'" :title="item.favorite ? '取消收藏' : '收藏记录'" @click="toggleFavorite(item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template></n-button>
+                      <n-button quaternary circle :type="item.favorite ? 'warning' : 'default'" :disabled="favoriteUpdatingId === item.id" :aria-busy="favoriteUpdatingId === item.id" :aria-label="item.favorite ? '取消收藏' : '收藏记录'" :title="item.favorite ? '取消收藏' : '收藏记录'" @click="toggleFavorite(item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template></n-button>
                       <n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button>
                       <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button>
-                      <n-button quaternary circle aria-label="编辑标签" title="编辑标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
+                      <n-button quaternary circle aria-label="整理记录" title="添加备注和标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
                       <n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button>
                       <n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm>
                     </n-space>
@@ -539,8 +540,10 @@ onUnmounted(() => {
         <n-space justify="end" class="share-modal-actions"><n-button @click="shareModalOpen = false">取消</n-button><n-button type="primary" :loading="shareCreating" @click="submitShare"><template #icon><Share2 :size="16" /></template>生成链接</n-button></n-space>
       </template>
     </n-modal>
-    <n-modal v-model:show="tagModalOpen" preset="card" title="编辑标签" class="tag-modal" :mask-closable="!tagSaving">
-      <p class="tag-modal-copy">用标签整理这条记录，之后可以直接搜索标签。最多 10 个，每个不超过 24 个字符。</p>
+    <n-modal v-model:show="tagModalOpen" preset="card" title="整理记录" class="tag-modal" :mask-closable="!tagSaving">
+      <label class="organize-field-label" for="clipboard-note">备注</label>
+      <n-input id="clipboard-note" v-model:value="noteDraft" type="textarea" maxlength="500" show-count :autosize="{ minRows: 3, maxRows: 7 }" placeholder="用一两句话说明这条内容是做什么的..." />
+      <div class="tag-field-heading"><span class="organize-field-label">标签</span><n-text depth="3">最多 10 个，每个 24 字</n-text></div>
       <n-dynamic-tags v-model:value="tagDraft" :max="10" round type="info" :input-props="{ maxlength: 24, placeholder: '输入标签' }" />
       <n-alert v-if="tagError" type="error" class="form-alert">{{ tagError }}</n-alert>
       <n-space justify="end" class="tag-modal-actions"><n-button :disabled="tagSaving" @click="tagModalOpen = false">取消</n-button><n-button type="primary" :loading="tagSaving" @click="saveTags">保存</n-button></n-space>
