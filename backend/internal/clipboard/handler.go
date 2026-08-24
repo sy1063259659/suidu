@@ -3,6 +3,7 @@ package clipboard
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -108,11 +109,16 @@ func (h *Handler) upload(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.maxFileBytes+(1<<20))
 	header, err := c.FormFile("file")
 	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			writeError(c, http.StatusRequestEntityTooLarge, h.fileLimitMessage())
+			return
+		}
 		writeError(c, http.StatusBadRequest, "a multipart file is required")
 		return
 	}
 	if header.Size > h.maxFileBytes {
-		writeError(c, http.StatusRequestEntityTooLarge, "file must be at most 100 MiB")
+		writeError(c, http.StatusRequestEntityTooLarge, h.fileLimitMessage())
 		return
 	}
 	file, err := header.Open()
@@ -136,7 +142,7 @@ func (h *Handler) upload(c *gin.Context) {
 	}
 	object, err := h.files.Put(c.Request.Context(), user.ID, filepath.Ext(header.Filename), io.MultiReader(bytes.NewReader(prefix), file), h.maxFileBytes)
 	if errors.Is(err, filestore.ErrTooLarge) {
-		writeError(c, http.StatusRequestEntityTooLarge, "file must be at most 100 MiB")
+		writeError(c, http.StatusRequestEntityTooLarge, h.fileLimitMessage())
 		return
 	}
 	if err != nil {
@@ -252,6 +258,10 @@ func isSafeImageType(mediaType string) bool {
 	default:
 		return false
 	}
+}
+
+func (h *Handler) fileLimitMessage() string {
+	return fmt.Sprintf("file must be at most %.1f MiB", float64(h.maxFileBytes)/(1<<20))
 }
 
 func writeError(c *gin.Context, status int, message string) {

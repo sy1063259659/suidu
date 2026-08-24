@@ -55,6 +55,12 @@ docker compose exec suidu-api suidu-api admin reset-password
 
 Clipboard records are isolated by user. Existing records without an owner are assigned to the first administrator when the API starts after the authentication migration.
 
+### Clipboard files
+
+Clipboard records support text, browser-safe image previews, and arbitrary file downloads. Files are limited to 100 MiB each by default (`SUIDU_MAX_FILE_BYTES`) and are stored in the `suidu-files` Docker volume; PostgreSQL stores only their metadata. SVG and other potentially executable formats are always downloaded instead of rendered inline.
+
+The API and SFTPGo share the volume through a dedicated `suidu` directory. `suidu-storage-init` only initializes its ownership and permissions before the API starts. Include both the PostgreSQL database and the `suidu-files` volume in backups and migrations.
+
 ### Services
 
 Copy `.env.example` to `.env`, set the existing server's PostgreSQL and Redis addresses, then start the application containers:

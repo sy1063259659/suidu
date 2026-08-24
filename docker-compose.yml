@@ -1,4 +1,11 @@
 services:
+  suidu-storage-init:
+    image: alpine:3.22
+    restart: "no"
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /data/suidu && chown 10001:1000 /data/suidu && chmod 2770 /data/suidu"]
+    volumes:
+      - suidu-files:/data
   sftpgo:
     image: drakkan/sftpgo:v2.7.5
     restart: unless-stopped
@@ -37,8 +44,15 @@ services:
       SUIDU_REDIS_KEY_PREFIX: ${SUIDU_REDIS_KEY_PREFIX:-suidu:}
       SUIDU_COOKIE_SECURE: ${SUIDU_COOKIE_SECURE:-true}
       SUIDU_SESSION_TTL: ${SUIDU_SESSION_TTL:-168h}
+      SUIDU_STORAGE_ROOT: ${SUIDU_STORAGE_ROOT:-/var/lib/suidu/files/suidu}
+      SUIDU_MAX_FILE_BYTES: ${SUIDU_MAX_FILE_BYTES:-104857600}
+    volumes:
+      - suidu-files:/var/lib/suidu/files
     ports:
       - "127.0.0.1:18080:8080"
+    depends_on:
+      suidu-storage-init:
+        condition: service_completed_successfully
     networks:
       - suidu-network
   suidu-web:
