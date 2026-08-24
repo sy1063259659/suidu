@@ -44,6 +44,7 @@ func (h *Handler) RegisterRoutes(router gin.IRouter) {
 	router.POST("/clipboard", h.create)
 	router.POST("/clipboard/files", h.upload)
 	router.GET("/clipboard/:id/content", h.content)
+	router.PATCH("/clipboard/:id", h.updateMetadata)
 	router.DELETE("/clipboard/:id", h.delete)
 	router.POST("/clipboard/:id/shares", h.createShare)
 	router.GET("/shares", h.listShares)
@@ -88,13 +89,57 @@ func (h *Handler) list(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "kind must be text, image, or file")
 		return
 	}
+	favoriteOnly := false
+	if raw := c.Query("favorite"); raw != "" {
+		if raw != "true" && raw != "false" {
+			writeError(c, http.StatusBadRequest, "favorite must be true or false")
+			return
+		}
+		favoriteOnly = raw == "true"
+	}
 
-	items, err := h.repo.List(c.Request.Context(), user.ID, ListFilter{Limit: limit, Query: query, Kind: kind})
+	items, err := h.repo.List(c.Request.Context(), user.ID, ListFilter{Limit: limit, Query: query, Kind: kind, FavoriteOnly: favoriteOnly})
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, "failed to list clipboard items")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+type metadataRequest struct {
+	Tags     []string `json:"tags"`
+	Favorite bool     `json:"favorite"`
+}
+
+func (h *Handler) updateMetadata(c *gin.Context) {
+	user, ok := auth.CurrentUser(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var request metadataRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeError(c, http.StatusBadRequest, "request body must be valid JSON")
+		return
+	}
+	item, err := h.repo.UpdateMetadata(c.Request.Context(), user.ID, id, ItemMetadata{Tags: request.Tags, Favorite: request.Favorite})
+	if errors.Is(err, ErrInvalidMetadata) {
+		writeError(c, http.StatusBadRequest, "use at most 10 tags with at most 24 characters each")
+		return
+	}
+	if errors.Is(err, ErrNotFound) {
+		writeError(c, http.StatusNotFound, "clipboard item not found")
+		return
+	}
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "failed to update clipboard metadata")
+		return
+	}
+	c.JSON(http.StatusOK, item)
 }
 
 func (h *Handler) create(c *gin.Context) {
@@ -342,7 +387,10 @@ func (h *Handler) publicShare(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.JSON(http.StatusOK, publicShareResponse{Item: share.Item, ExpiresAt: share.ExpiresAt, CreatedAt: share.CreatedAt})
+	item := share.Item
+	item.Tags = nil
+	item.Favorite = false
+	c.JSON(http.StatusOK, publicShareResponse{Item: item, ExpiresAt: share.ExpiresAt, CreatedAt: share.CreatedAt})
 }
 
 func (h *Handler) publicShareContent(c *gin.Context) {
