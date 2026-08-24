@@ -22,7 +22,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
 .brand span { margin-left: 8px; color: #2d6cdf; font-size: 13px; letter-spacing: .12em; }
 .subtitle { margin-top: 6px; color: #78869a; font-size: 13px; }
 .app-content { padding: 38px clamp(20px, 5vw, 72px) 72px; }
-.clipboard-page { max-width: 920px; margin: 0 auto; }
+.clipboard-page, .shares-page { max-width: 920px; margin: 0 auto; }
 .page-intro, .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
 .page-intro { margin-bottom: 22px; }
 .eyebrow { margin: 0 0 7px; color: #2d6cdf; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
@@ -85,6 +85,32 @@ h2 { font-size: 21px; }
 .file-attachment .attachment-details { margin-top: 0; }
 .file-icon { display: grid; flex: 0 0 44px; place-items: center; width: 44px; height: 44px; border-radius: 8px; color: #2d6cdf; background: #eaf1ff; }
 .history-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 13px; }
+.share-list { overflow: hidden; border-radius: 8px; background: #fff; }
+.share-row { width: 100%; min-width: 0; }
+.share-row-heading, .share-row-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.share-row-heading { color: #2d6cdf; }
+.share-row-heading strong { overflow: hidden; color: #25344b; text-overflow: ellipsis; white-space: nowrap; }
+.share-item-preview { max-height: 240px; margin: 16px 0 12px; overflow: hidden; }
+.share-item-preview .history-content { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.share-item-preview .image-preview-link img { max-height: 180px; }
+.share-link-line { overflow: hidden; margin-bottom: 12px; padding: 9px 11px; border-radius: 6px; color: #52637b; background: #f6f8fb; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.share-modal { width: min(92vw, 520px); }
+.share-modal-copy { margin: 0 0 20px; color: #718096; line-height: 1.6; }
+.share-expiry-label { display: block; margin-bottom: 8px; color: #516075; font-size: 13px; font-weight: 650; }
+.share-modal-actions { margin-top: 22px; }
+.share-link-input { margin: 16px 0; }
+.public-share-page { min-height: 100vh; padding: clamp(24px, 6vw, 72px) 20px; background: #f4f7fb; }
+.public-share-brand { display: flex; align-items: center; gap: 10px; width: min(100%, 760px); margin: 0 auto 18px; color: #1d3d74; letter-spacing: .06em; }
+.public-share-mark { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid #c9d9f4; border-radius: 8px; color: #2d6cdf; background: #edf3ff; }
+.public-share-card { width: min(100%, 760px); min-height: 320px; margin: 0 auto; border: 1px solid #e0e7f0; box-shadow: 0 18px 54px rgba(34, 52, 84, .09); }
+.public-share-heading, .public-share-footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.public-share-content { margin: 28px 0; }
+.public-share-footer { padding-top: 18px; border-top: 1px solid #e5ebf2; color: #78869a; font-size: 13px; }
+.public-share-actions { display: flex; gap: 8px; }
+.public-share-state { min-height: 270px; display: grid; place-items: center; text-align: center; }
+.unavailable-state { align-content: center; gap: 9px; }
+.unavailable-state h1, .unavailable-state p { margin: 0; }
+.unavailable-state p { color: #78869a; }
 .loading-state, .empty-state { min-height: 170px; display: grid; place-items: center; }
 @media (max-width: 640px) {
   .auth-page { padding: 16px; }
@@ -94,11 +120,15 @@ h2 { font-size: 21px; }
   .auth-form-panel { padding: 34px 26px 36px; }
   .auth-card { padding: 10px 12px 16px; }
   .app-header { align-items: flex-start; flex-direction: column; }
+  .app-header > .n-space { flex-wrap: wrap; }
   .app-content { padding-top: 28px; }
   .page-intro { align-items: flex-start; flex-direction: column; }
   .composer-actions { justify-content: stretch; }
   .composer-actions .n-button { flex: 1; }
   .history-meta { align-items: flex-start; flex-direction: column; }
+  .share-row-footer, .public-share-footer { align-items: flex-start; flex-direction: column; }
+  .public-share-actions { width: 100%; }
+  .public-share-actions .n-button { flex: 1; }
   .admin-hero { align-items: flex-start; flex-direction: column; }
   .admin-metrics { grid-template-columns: 1fr; }
   .metric-item + .metric-item { border-top: 1px solid #e4eaf2; border-left: 0; }

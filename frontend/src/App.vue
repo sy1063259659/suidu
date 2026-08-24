@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import axios from 'axios'
-import { computed, onMounted, ref } from 'vue'
-import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, KeyRound, LogIn, Paperclip, RefreshCw, Send, ShieldCheck, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
+import { computed, onMounted, ref, shallowRef } from 'vue'
+import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Send, Share2, ShieldCheck, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NCard, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
-  NList, NListItem, NPopconfirm, NProgress, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
+  NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
   type UploadCustomRequestOptions,
 } from 'naive-ui'
 import {
@@ -12,7 +12,11 @@ import {
   setUserDisabled, type User,
 } from './api/auth'
 import { clipboardContentUrl, createClipboard, deleteClipboard, listClipboard, uploadClipboardFile, type ClipboardItem } from './api/clipboard'
+import { createClipboardShare, listClipboardShares, publicShareUrl, revokeClipboardShare, type ClipboardShare } from './api/shares'
 import ClipboardItemContent from './components/ClipboardItemContent.vue'
+import PublicSharePage from './components/PublicSharePage.vue'
+
+const publicToken = window.location.pathname.match(/^\/s\/([A-Za-z0-9_-]+)\/?$/)?.[1] ?? ''
 
 const items = ref<ClipboardItem[]>([])
 const currentUser = ref<User | null>(null)
@@ -39,9 +43,24 @@ const submitting = ref(false)
 const error = ref('')
 const apiStatus = ref<'checking' | 'online' | 'offline'>('checking')
 const copiedId = ref<number | null>(null)
+const copiedShareId = ref<number | null>(null)
 const uploadError = ref('')
 const uploadProgress = ref<Record<string, number>>({})
-const activeView = ref<'clipboard' | 'admin'>('clipboard')
+const shares = ref<ClipboardShare[]>([])
+const sharesLoading = ref(false)
+const shareModalOpen = ref(false)
+const shareCreating = ref(false)
+const shareItem = shallowRef<ClipboardItem | null>(null)
+const shareTTL = ref(86400)
+const createdShare = shallowRef<ClipboardShare | null>(null)
+const shareError = ref('')
+const activeView = ref<'clipboard' | 'shares' | 'admin'>('clipboard')
+const shareExpiryOptions = [
+  { label: '1 小时', value: 3600 },
+  { label: '1 天', value: 86400 },
+  { label: '7 天', value: 604800 },
+  { label: '30 天', value: 2592000 },
+]
 const canSubmit = computed(() => draft.value.trim().length > 0 && !submitting.value)
 const isAdmin = computed(() => currentUser.value?.role === 'admin')
 const uploadingCount = computed(() => Object.keys(uploadProgress.value).length)
@@ -68,11 +87,17 @@ async function loadAdminUsers() {
   try { adminUsers.value = await listUsers() } catch (errorValue) { adminError.value = errorMessage(errorValue, '无法加载用户列表。') } finally { adminLoading.value = false }
 }
 
+async function loadShares() {
+  sharesLoading.value = true
+  shareError.value = ''
+  try { shares.value = await listClipboardShares() } catch (errorValue) { shareError.value = errorMessage(errorValue, '无法加载分享链接。') } finally { sharesLoading.value = false }
+}
+
 async function loadSession() {
   authLoading.value = true
   try {
     currentUser.value = await getCurrentUser()
-    await loadItems()
+    await Promise.all([loadItems(), loadShares()])
     await loadAdminUsers()
   } catch (errorValue) {
     if (!axios.isAxiosError(errorValue) || errorValue.response?.status !== 401) loginError.value = '无法连接认证服务，请稍后重试。'
@@ -84,11 +109,11 @@ async function submitLogin() {
   if (!loginUsername.value.trim() || !loginPassword.value || loginLoading.value) return
   loginLoading.value = true
   loginError.value = ''
-  try { currentUser.value = await login(loginUsername.value, loginPassword.value); loginPassword.value = ''; await loadItems(); await loadAdminUsers() } catch (errorValue) { loginError.value = errorMessage(errorValue, '登录失败，请稍后重试。') } finally { loginLoading.value = false }
+  try { currentUser.value = await login(loginUsername.value, loginPassword.value); loginPassword.value = ''; await Promise.all([loadItems(), loadShares()]); await loadAdminUsers() } catch (errorValue) { loginError.value = errorMessage(errorValue, '登录失败，请稍后重试。') } finally { loginLoading.value = false }
 }
 
 async function submitLogout() {
-  try { await logout() } finally { currentUser.value = null; items.value = []; adminUsers.value = []; passwordFormOpen.value = false; activeView.value = 'clipboard' }
+  try { await logout() } finally { currentUser.value = null; items.value = []; shares.value = []; adminUsers.value = []; passwordFormOpen.value = false; activeView.value = 'clipboard' }
 }
 
 async function submitPasswordChange() {
@@ -162,17 +187,62 @@ async function copyItem(item: ClipboardItem) {
 }
 
 async function removeItem(item: ClipboardItem) {
-  try { await deleteClipboard(item.id); items.value = items.value.filter((current) => current.id !== item.id) } catch { error.value = '删除失败，请稍后重试。' }
+  try { await deleteClipboard(item.id); items.value = items.value.filter((current) => current.id !== item.id); shares.value = shares.value.filter((share) => share.item.id !== item.id) } catch { error.value = '删除失败，请稍后重试。' }
+}
+
+function openShareModal(item: ClipboardItem) {
+  shareItem.value = item
+  shareTTL.value = 86400
+  createdShare.value = null
+  shareError.value = ''
+  shareModalOpen.value = true
+}
+
+async function submitShare() {
+  if (!shareItem.value || shareCreating.value) return
+  shareCreating.value = true
+  shareError.value = ''
+  try {
+    createdShare.value = await createClipboardShare(shareItem.value.id, shareTTL.value)
+    await loadShares()
+  } catch (errorValue) {
+    shareError.value = errorMessage(errorValue, '创建分享链接失败。')
+  } finally { shareCreating.value = false }
+}
+
+async function copyShareLink(share: ClipboardShare) {
+  if (!navigator.clipboard?.writeText) { shareError.value = '当前浏览器不支持复制链接。'; return }
+  try {
+    await navigator.clipboard.writeText(publicShareUrl(share.token))
+    copiedShareId.value = share.id
+    window.setTimeout(() => { if (copiedShareId.value === share.id) copiedShareId.value = null }, 1600)
+  } catch { shareError.value = '复制链接失败。' }
+}
+
+async function revokeShare(share: ClipboardShare) {
+  try { await revokeClipboardShare(share.id); await loadShares() } catch (errorValue) { shareError.value = errorMessage(errorValue, '关闭分享链接失败。') }
+}
+
+function shareStatus(share: ClipboardShare): 'active' | 'expired' | 'revoked' {
+  if (share.revokedAt) return 'revoked'
+  return new Date(share.expiresAt).getTime() <= Date.now() ? 'expired' : 'active'
+}
+
+function refreshActiveView() {
+  if (activeView.value === 'shares') void loadShares()
+  else if (activeView.value === 'admin') void loadAdminUsers()
+  else void loadItems()
 }
 
 function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function handleKeydown(event: KeyboardEvent) { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
 
-onMounted(loadSession)
+onMounted(() => { if (!publicToken) void loadSession() })
 </script>
 
 <template>
-  <div v-if="authLoading" class="auth-loading"><n-spin size="medium" /></div>
+  <PublicSharePage v-if="publicToken" :token="publicToken" />
+  <div v-else-if="authLoading" class="auth-loading"><n-spin size="medium" /></div>
   <main v-else-if="!currentUser" class="auth-page">
     <div class="auth-shell">
       <section class="auth-brand-panel">
@@ -194,7 +264,9 @@ onMounted(loadSession)
     <n-layout-header bordered class="app-header">
       <div><div class="brand">随渡 <span>SUIDU</span></div><div class="subtitle">把文字放在随手可取的地方</div></div>
       <n-space align="center" :size="12">
-        <n-button v-if="isAdmin" :type="activeView === 'admin' ? 'primary' : 'default'" @click="activeView = activeView === 'admin' ? 'clipboard' : 'admin'"><template #icon><ShieldCheck v-if="activeView === 'clipboard'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'admin' ? '返回剪贴板' : '管理中心' }}
+        <n-button :type="activeView === 'shares' ? 'primary' : 'default'" @click="activeView = activeView === 'shares' ? 'clipboard' : 'shares'"><template #icon><Share2 v-if="activeView !== 'shares'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'shares' ? '返回剪贴板' : '分享管理' }}
+        </n-button>
+        <n-button v-if="isAdmin" :type="activeView === 'admin' ? 'primary' : 'default'" @click="activeView = activeView === 'admin' ? 'clipboard' : 'admin'"><template #icon><ShieldCheck v-if="activeView !== 'admin'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'admin' ? '返回剪贴板' : '管理中心' }}
         </n-button>
         <n-tag :type="isAdmin ? 'warning' : 'info'">{{ currentUser.username }} · {{ isAdmin ? '管理员' : '普通用户' }}
         </n-tag>
@@ -204,7 +276,7 @@ onMounted(loadSession)
         </n-button>
         <n-tag :type="apiStatus === 'online' ? 'success' : apiStatus === 'offline' ? 'error' : 'warning'">API {{ apiStatus === 'online' ? '在线' : apiStatus === 'offline' ? '离线' : '检查中' }}
         </n-tag>
-        <n-button quaternary circle aria-label="刷新内容" title="刷新内容" :loading="loading" @click="loadItems"><template #icon><RefreshCw :size="17" /></template>
+        <n-button quaternary circle aria-label="刷新内容" title="刷新内容" :loading="activeView === 'shares' ? sharesLoading : activeView === 'admin' ? adminLoading : loading" @click="refreshActiveView"><template #icon><RefreshCw :size="17" /></template>
         </n-button>
       </n-space>
     </n-layout-header>
@@ -227,6 +299,32 @@ onMounted(loadSession)
                   </n-tag></div><n-space :size="4"><n-button v-if="user.role === 'user'" quaternary circle aria-label="重置密码" title="重置密码" @click="resetPasswordFor(user)"><template #icon><KeyRound :size="16" /></template></n-button><n-button v-if="user.role === 'user'" quaternary circle :aria-label="user.disabled ? '启用用户' : '停用用户'" :title="user.disabled ? '启用用户' : '停用用户'" @click="toggleUser(user)"><template #icon><ShieldCheck :size="16" /></template></n-button></n-space></div></n-list-item></n-list></div>
           </section>
         </main>
+        <main v-else-if="activeView === 'shares'" class="shares-page">
+          <section class="page-intro"><div><p class="eyebrow">PUBLIC LINKS</p><h1>分享管理</h1><p class="intro-copy">查看公开链接的有效期，或随时让链接失效。</p></div><n-tag round :bordered="false" type="info">{{ shares.length }} 个链接</n-tag></section>
+          <n-alert v-if="shareError" type="error" closable class="error-alert" @close="shareError = ''">{{ shareError }}</n-alert>
+          <div v-if="sharesLoading && !shares.length" class="loading-state"><n-spin size="medium" /></div>
+          <n-empty v-else-if="!shares.length" description="还没有公开分享" class="empty-state" />
+          <n-list v-else class="share-list" bordered>
+            <n-list-item v-for="share in shares" :key="share.id">
+              <div class="share-row">
+                <div class="share-row-heading">
+                  <n-space align="center" :size="8"><Link :size="16" /><strong>{{ share.item.kind === 'text' ? '文本分享' : share.item.fileName }}</strong></n-space>
+                  <n-tag size="small" :type="shareStatus(share) === 'active' ? 'success' : shareStatus(share) === 'expired' ? 'warning' : 'error'">{{ shareStatus(share) === 'active' ? '有效' : shareStatus(share) === 'expired' ? '已过期' : '已失效' }}</n-tag>
+                </div>
+                <div class="share-item-preview"><ClipboardItemContent :item="share.item" /></div>
+                <div class="share-link-line">{{ publicShareUrl(share.token) }}</div>
+                <div class="share-row-footer">
+                  <n-text depth="3">创建于 {{ formatDate(share.createdAt) }} · 有效期至 {{ formatDate(share.expiresAt) }}</n-text>
+                  <n-space v-if="shareStatus(share) === 'active'" :size="4">
+                    <n-button quaternary circle :aria-label="copiedShareId === share.id ? '已复制' : '复制分享链接'" :title="copiedShareId === share.id ? '已复制' : '复制分享链接'" @click="copyShareLink(share)"><template #icon><Copy :size="16" /></template></n-button>
+                    <n-button tag="a" :href="publicShareUrl(share.token)" target="_blank" rel="noopener" quaternary circle aria-label="打开分享链接" title="打开分享链接"><template #icon><ExternalLink :size="16" /></template></n-button>
+                    <n-popconfirm @positive-click="revokeShare(share)"><template #trigger><n-button quaternary circle aria-label="让链接失效" title="让链接失效"><template #icon><Link2Off :size="16" /></template></n-button></template>确定立即关闭这个分享链接吗？</n-popconfirm>
+                  </n-space>
+                </div>
+              </div>
+            </n-list-item>
+          </n-list>
+        </main>
         <main v-else class="clipboard-page">
           <section class="page-intro"><div><p class="eyebrow">CLIPBOARD</p><h1>剪贴板</h1><p class="intro-copy">在手机和电脑之间传递文字、图片和文件。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条记录
           </n-tag></section>
@@ -242,8 +340,22 @@ onMounted(loadSession)
           <n-alert v-if="error" type="error" closable class="error-alert" @close="error = ''">{{ error }}
           </n-alert>
           <section class="history-section"><div class="section-heading"><div><p class="eyebrow">RECENT</p><h2>最近记录</h2></div><n-text depth="3">按时间倒序
-          </n-text></div><div v-if="loading && !items.length" class="loading-state"><n-spin size="medium" /></div><n-empty v-else-if="!items.length" description="还没有剪贴板记录" class="empty-state" /><n-list v-else class="history-list" bordered><n-list-item v-for="item in items" :key="item.id"><div class="history-item"><ClipboardItemContent :item="item" /><div class="history-meta"><n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space><n-space :size="4"><n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button><n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button><n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm></n-space></div></div></n-list-item></n-list></section>
+          </n-text></div><div v-if="loading && !items.length" class="loading-state"><n-spin size="medium" /></div><n-empty v-else-if="!items.length" description="还没有剪贴板记录" class="empty-state" /><n-list v-else class="history-list" bordered><n-list-item v-for="item in items" :key="item.id"><div class="history-item"><ClipboardItemContent :item="item" /><div class="history-meta"><n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space><n-space :size="4"><n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button><n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button><n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button><n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm></n-space></div></div></n-list-item></n-list></section>
         </main>
     </n-layout-content>
+    <n-modal v-model:show="shareModalOpen" preset="card" title="公开分享" class="share-modal">
+      <template v-if="createdShare">
+        <n-alert type="success">分享链接已创建。</n-alert>
+        <n-input :value="publicShareUrl(createdShare.token)" readonly class="share-link-input" />
+        <n-space justify="end"><n-button secondary @click="copyShareLink(createdShare)"><template #icon><Copy :size="16" /></template>{{ copiedShareId === createdShare.id ? '已复制' : '复制链接' }}</n-button><n-button tag="a" :href="publicShareUrl(createdShare.token)" target="_blank" rel="noopener" type="primary"><template #icon><ExternalLink :size="16" /></template>打开链接</n-button></n-space>
+      </template>
+      <template v-else>
+        <p class="share-modal-copy">任何拿到链接的人都可以查看或下载这条内容。</p>
+        <label class="share-expiry-label">有效期</label>
+        <n-select v-model:value="shareTTL" :options="shareExpiryOptions" />
+        <n-alert v-if="shareError" type="error" class="form-alert">{{ shareError }}</n-alert>
+        <n-space justify="end" class="share-modal-actions"><n-button @click="shareModalOpen = false">取消</n-button><n-button type="primary" :loading="shareCreating" @click="submitShare"><template #icon><Share2 :size="16" /></template>生成链接</n-button></n-space>
+      </template>
+    </n-modal>
   </n-layout>
 </template>

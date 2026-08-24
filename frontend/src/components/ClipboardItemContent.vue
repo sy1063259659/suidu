@@ -2,7 +2,14 @@
 import { File, Image } from '@lucide/vue'
 import { clipboardContentUrl, type ClipboardItem } from '../api/clipboard'
 
-defineProps<{ item: ClipboardItem }>()
+const props = defineProps<{
+  item: ClipboardItem
+  contentUrl?: (download?: boolean) => string
+}>()
+
+function itemContentUrl(download = false) {
+  return props.contentUrl?.(download) ?? clipboardContentUrl(props.item.id, download)
+}
 
 function formatFileSize(value = 0) {
   if (value < 1024) return `${value} B`
@@ -15,8 +22,8 @@ function formatFileSize(value = 0) {
 <template>
   <div v-if="item.kind === 'text' || !item.kind" class="history-content">{{ item.content }}</div>
   <div v-else-if="item.kind === 'image'" class="attachment-content image-attachment">
-    <a :href="clipboardContentUrl(item.id)" target="_blank" rel="noopener" class="image-preview-link">
-      <img :src="clipboardContentUrl(item.id)" :alt="item.fileName || '剪贴板图片'" loading="lazy" />
+    <a :href="itemContentUrl()" target="_blank" rel="noopener" class="image-preview-link">
+      <img :src="itemContentUrl()" :alt="item.fileName || '剪贴板图片'" loading="lazy" />
     </a>
     <div class="attachment-details"><Image :size="18" /><div><strong>{{ item.fileName }}</strong><span>{{ formatFileSize(item.sizeBytes) }}</span></div></div>
   </div>
