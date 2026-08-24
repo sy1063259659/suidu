@@ -46,11 +46,17 @@ type Attachment struct {
 	Source     string
 }
 
+type ListFilter struct {
+	Limit int
+	Query string
+	Kind  Kind
+}
+
 type Repository interface {
 	CreateText(ctx context.Context, userID int64, content, source string) (Item, error)
 	CreateAttachment(ctx context.Context, userID int64, attachment Attachment) (Item, error)
 	Get(ctx context.Context, userID, id int64) (Item, error)
-	List(ctx context.Context, userID int64, limit int) ([]Item, error)
+	List(ctx context.Context, userID int64, filter ListFilter) ([]Item, error)
 	Delete(ctx context.Context, userID, id int64) error
 	CreateShare(ctx context.Context, userID int64, input CreateShareInput) (Share, error)
 	ListShares(ctx context.Context, userID int64, limit int) ([]Share, error)

@@ -78,7 +78,7 @@ func (h *Handler) list(c *gin.Context) {
 		limit = parsed
 	}
 
-	items, err := h.repo.List(c.Request.Context(), user.ID, limit)
+	items, err := h.repo.List(c.Request.Context(), user.ID, ListFilter{Limit: limit})
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, "failed to list clipboard items")
 		return

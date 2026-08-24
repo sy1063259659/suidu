@@ -3,6 +3,7 @@ package clipboard
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -75,13 +76,20 @@ func (r *MemoryRepository) Get(_ context.Context, userID, id int64) (Item, error
 	return item, nil
 }
 
-func (r *MemoryRepository) List(_ context.Context, userID int64, limit int) ([]Item, error) {
+func (r *MemoryRepository) List(_ context.Context, userID int64, filter ListFilter) ([]Item, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
 	items := make([]Item, 0, len(r.items))
 	for _, item := range r.items {
 		if item.UserID != userID {
+			continue
+		}
+		if filter.Kind != "" && item.Kind != filter.Kind {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(item.Content), query) && !strings.Contains(strings.ToLower(item.FileName), query) {
 			continue
 		}
 		items = append(items, item)
@@ -92,8 +100,8 @@ func (r *MemoryRepository) List(_ context.Context, userID int64, limit int) ([]I
 		}
 		return items[i].CreatedAt.After(items[j].CreatedAt)
 	})
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
+	if filter.Limit > 0 && len(items) > filter.Limit {
+		items = items[:filter.Limit]
 	}
 	return items, nil
 }

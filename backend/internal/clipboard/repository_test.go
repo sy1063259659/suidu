@@ -20,7 +20,7 @@ func TestMemoryRepositoryLifecycle(t *testing.T) {
 		t.Fatalf("create second: %v", err)
 	}
 
-	items, err := repo.List(ctx, 1, 10)
+	items, err := repo.List(ctx, 1, ListFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -33,6 +33,52 @@ func TestMemoryRepositoryLifecycle(t *testing.T) {
 	}
 	if err := repo.Delete(ctx, 1, first.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected not found, got %v", err)
+	}
+}
+
+func TestMemoryRepositoryListFilters(t *testing.T) {
+	repo := NewMemoryRepository()
+	ctx := t.Context()
+
+	first, err := repo.CreateText(ctx, 1, "Project Alpha token", "web")
+	if err != nil {
+		t.Fatalf("create first text: %v", err)
+	}
+	if _, err := repo.CreateText(ctx, 1, "unrelated note", "web"); err != nil {
+		t.Fatalf("create unrelated text: %v", err)
+	}
+	image, err := repo.CreateAttachment(ctx, 1, Attachment{
+		Kind: KindImage, FileName: "ALPHA-diagram.png", MediaType: "image/png", SizeBytes: 12, StorageKey: "1/alpha.png", Source: "web",
+	})
+	if err != nil {
+		t.Fatalf("create image: %v", err)
+	}
+	if _, err := repo.CreateText(ctx, 2, "alpha from another user", "web"); err != nil {
+		t.Fatalf("create other user's text: %v", err)
+	}
+
+	items, err := repo.List(ctx, 1, ListFilter{Limit: 10, Query: "  aLpHa  "})
+	if err != nil {
+		t.Fatalf("search list: %v", err)
+	}
+	if len(items) != 2 || items[0].ID != image.ID || items[1].ID != first.ID {
+		t.Fatalf("search results = %#v", items)
+	}
+
+	items, err = repo.List(ctx, 1, ListFilter{Limit: 10, Query: "alpha", Kind: KindText})
+	if err != nil {
+		t.Fatalf("filtered list: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != first.ID {
+		t.Fatalf("text results = %#v", items)
+	}
+
+	items, err = repo.List(ctx, 1, ListFilter{Limit: 1, Query: "alpha"})
+	if err != nil {
+		t.Fatalf("limited list: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != image.ID {
+		t.Fatalf("limited results = %#v", items)
 	}
 }
 

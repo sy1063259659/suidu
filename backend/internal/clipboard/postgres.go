@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -78,14 +79,20 @@ func (r *PostgresRepository) Get(ctx context.Context, userID, id int64) (Item, e
 	return item, nil
 }
 
-func (r *PostgresRepository) List(ctx context.Context, userID int64, limit int) ([]Item, error) {
+func (r *PostgresRepository) List(ctx context.Context, userID int64, filter ListFilter) ([]Item, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+itemColumns+`
 		FROM clipboard_items
 		WHERE user_id = $1
+		  AND ($2 = '' OR kind = $2)
+		  AND (
+			$3 = ''
+			OR COALESCE(content, '') ILIKE '%' || $3 || '%'
+			OR COALESCE(file_name, '') ILIKE '%' || $3 || '%'
+		  )
 		ORDER BY created_at DESC, id DESC
-		LIMIT $2
-	`, userID, limit)
+		LIMIT NULLIF($4, 0)
+	`, userID, filter.Kind, strings.TrimSpace(filter.Query), filter.Limit)
 	if err != nil {
 		return nil, err
 	}
