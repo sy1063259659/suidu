@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -122,4 +123,95 @@ func (r *PostgresRepository) Delete(ctx context.Context, userID, id int64) error
 func (r *PostgresRepository) AssignOrphanedItems(ctx context.Context, userID int64) error {
 	_, err := r.pool.Exec(ctx, `UPDATE clipboard_items SET user_id = $1 WHERE user_id IS NULL`, userID)
 	return err
+}
+
+const shareItemColumns = `
+	s.id, s.user_id, s.token, s.expires_at, s.revoked_at, s.created_at,
+	i.id, i.user_id, i.kind, i.content, i.file_name, i.media_type, i.size_bytes, i.storage_key, i.source, i.created_at`
+
+func (r *PostgresRepository) CreateShare(ctx context.Context, userID int64, input CreateShareInput) (Share, error) {
+	now := time.Now().UTC()
+	if err := validateShareInput(input, now); err != nil {
+		return Share{}, err
+	}
+	var share Share
+	err := r.pool.QueryRow(ctx, `
+		WITH inserted AS (
+			INSERT INTO clipboard_shares (user_id, item_id, token, expires_at)
+			SELECT $1, i.id, $3, $4
+			FROM clipboard_items i
+			WHERE i.user_id = $1 AND i.id = $2
+			RETURNING *
+		)
+		SELECT `+shareItemColumns+`
+		FROM inserted s
+		JOIN clipboard_items i ON i.id = s.item_id
+	`, userID, input.ItemID, input.Token, input.ExpiresAt.UTC()).Scan(shareDestinations(&share)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Share{}, ErrNotFound
+	}
+	return share, err
+}
+
+func (r *PostgresRepository) ListShares(ctx context.Context, userID int64, limit int) ([]Share, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+shareItemColumns+`
+		FROM clipboard_shares s
+		JOIN clipboard_items i ON i.id = s.item_id
+		WHERE s.user_id = $1
+		ORDER BY s.created_at DESC, s.id DESC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	shares := make([]Share, 0)
+	for rows.Next() {
+		var share Share
+		if err := rows.Scan(shareDestinations(&share)...); err != nil {
+			return nil, err
+		}
+		shares = append(shares, share)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return shares, nil
+}
+
+func (r *PostgresRepository) GetPublicShare(ctx context.Context, token string) (Share, error) {
+	var share Share
+	err := r.pool.QueryRow(ctx, `
+		SELECT `+shareItemColumns+`
+		FROM clipboard_shares s
+		JOIN clipboard_items i ON i.id = s.item_id
+		WHERE s.token = $1 AND s.revoked_at IS NULL AND s.expires_at > NOW()
+	`, token).Scan(shareDestinations(&share)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Share{}, ErrNotFound
+	}
+	return share, err
+}
+
+func (r *PostgresRepository) RevokeShare(ctx context.Context, userID, id int64) error {
+	result, err := r.pool.Exec(ctx, `
+		UPDATE clipboard_shares
+		SET revoked_at = NOW()
+		WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+	`, id, userID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func shareDestinations(share *Share) []any {
+	destinations := []any{
+		&share.ID, &share.UserID, &share.Token, &share.ExpiresAt, &share.RevokedAt, &share.CreatedAt,
+	}
+	return append(destinations, itemDestinations(&share.Item)...)
 }

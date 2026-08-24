@@ -8,13 +8,18 @@ import (
 )
 
 type MemoryRepository struct {
-	mu     sync.RWMutex
-	nextID int64
-	items  map[int64]Item
+	mu          sync.RWMutex
+	nextID      int64
+	nextShareID int64
+	items       map[int64]Item
+	shares      map[int64]Share
+	now         func() time.Time
 }
 
 func NewMemoryRepository() *MemoryRepository {
-	return &MemoryRepository{nextID: 1, items: make(map[int64]Item)}
+	return &MemoryRepository{
+		nextID: 1, nextShareID: 1, items: make(map[int64]Item), shares: make(map[int64]Share), now: time.Now,
+	}
 }
 
 func (r *MemoryRepository) CreateText(_ context.Context, userID int64, content, source string) (Item, error) {
@@ -31,7 +36,7 @@ func (r *MemoryRepository) CreateText(_ context.Context, userID int64, content, 
 		Kind:      KindText,
 		Content:   content,
 		Source:    normalizeSource(source),
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: r.now().UTC(),
 	}
 	r.nextID++
 	r.items[item.ID] = item
@@ -53,7 +58,7 @@ func (r *MemoryRepository) CreateAttachment(_ context.Context, userID int64, att
 		SizeBytes:  attachment.SizeBytes,
 		StorageKey: attachment.StorageKey,
 		Source:     normalizeSource(attachment.Source),
-		CreatedAt:  time.Now().UTC(),
+		CreatedAt:  r.now().UTC(),
 	}
 	r.nextID++
 	r.items[item.ID] = item
@@ -102,5 +107,85 @@ func (r *MemoryRepository) Delete(_ context.Context, userID, id int64) error {
 		return ErrNotFound
 	}
 	delete(r.items, id)
+	for shareID, share := range r.shares {
+		if share.Item.ID == id {
+			delete(r.shares, shareID)
+		}
+	}
+	return nil
+}
+
+func (r *MemoryRepository) CreateShare(_ context.Context, userID int64, input CreateShareInput) (Share, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now().UTC()
+	if err := validateShareInput(input, now); err != nil {
+		return Share{}, err
+	}
+	item, ok := r.items[input.ItemID]
+	if !ok || item.UserID != userID {
+		return Share{}, ErrNotFound
+	}
+	for _, existing := range r.shares {
+		if existing.Token == input.Token {
+			return Share{}, ErrInvalidShare
+		}
+	}
+	share := Share{
+		ID: r.nextShareID, UserID: userID, Token: input.Token, Item: item,
+		ExpiresAt: input.ExpiresAt.UTC(), CreatedAt: now,
+	}
+	r.nextShareID++
+	r.shares[share.ID] = share
+	return share, nil
+}
+
+func (r *MemoryRepository) ListShares(_ context.Context, userID int64, limit int) ([]Share, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	shares := make([]Share, 0)
+	for _, share := range r.shares {
+		if share.UserID == userID {
+			shares = append(shares, share)
+		}
+	}
+	sort.Slice(shares, func(i, j int) bool {
+		if shares[i].CreatedAt.Equal(shares[j].CreatedAt) {
+			return shares[i].ID > shares[j].ID
+		}
+		return shares[i].CreatedAt.After(shares[j].CreatedAt)
+	})
+	if limit > 0 && len(shares) > limit {
+		shares = shares[:limit]
+	}
+	return shares, nil
+}
+
+func (r *MemoryRepository) GetPublicShare(_ context.Context, token string) (Share, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	now := r.now().UTC()
+	for _, share := range r.shares {
+		if share.Token != token || share.RevokedAt != nil || !share.ExpiresAt.After(now) {
+			continue
+		}
+		if _, ok := r.items[share.Item.ID]; !ok {
+			return Share{}, ErrNotFound
+		}
+		return share, nil
+	}
+	return Share{}, ErrNotFound
+}
+
+func (r *MemoryRepository) RevokeShare(_ context.Context, userID, id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	share, ok := r.shares[id]
+	if !ok || share.UserID != userID || share.RevokedAt != nil {
+		return ErrNotFound
+	}
+	revokedAt := r.now().UTC()
+	share.RevokedAt = &revokedAt
+	r.shares[id] = share
 	return nil
 }

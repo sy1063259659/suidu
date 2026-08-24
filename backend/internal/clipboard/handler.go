@@ -2,6 +2,8 @@ package clipboard
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sy1063259659/suidu/backend/internal/auth"
@@ -42,6 +45,14 @@ func (h *Handler) RegisterRoutes(router gin.IRouter) {
 	router.POST("/clipboard/files", h.upload)
 	router.GET("/clipboard/:id/content", h.content)
 	router.DELETE("/clipboard/:id", h.delete)
+	router.POST("/clipboard/:id/shares", h.createShare)
+	router.GET("/shares", h.listShares)
+	router.POST("/shares/:id/revoke", h.revokeShare)
+}
+
+func (h *Handler) RegisterPublicRoutes(router gin.IRouter) {
+	router.GET("/public/shares/:token", h.publicShare)
+	router.GET("/public/shares/:token/content", h.publicShareContent)
 }
 
 type createRequest struct {
@@ -179,6 +190,10 @@ func (h *Handler) content(c *gin.Context) {
 		writeError(c, http.StatusInternalServerError, "failed to load clipboard attachment")
 		return
 	}
+	h.serveItemContent(c, item)
+}
+
+func (h *Handler) serveItemContent(c *gin.Context, item Item) {
 	if item.StorageKey == "" {
 		writeError(c, http.StatusNotFound, "clipboard attachment not found")
 		return
@@ -204,9 +219,162 @@ func (h *Handler) content(c *gin.Context) {
 	}
 	c.Header("Content-Type", mediaType)
 	c.Header("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": item.FileName}))
-	c.Header("Cache-Control", "private, no-store")
+	c.Header("Cache-Control", "no-store")
 	c.Header("X-Content-Type-Options", "nosniff")
 	http.ServeContent(c.Writer, c.Request, item.FileName, item.CreatedAt, reader)
+}
+
+type createShareRequest struct {
+	ExpiresInSeconds int64 `json:"expiresInSeconds"`
+}
+
+func (h *Handler) createShare(c *gin.Context) {
+	user, ok := auth.CurrentUser(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var request createShareRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeError(c, http.StatusBadRequest, "request body must be valid JSON")
+		return
+	}
+	if request.ExpiresInSeconds < int64(MinShareTTL/time.Second) || request.ExpiresInSeconds > int64(MaxShareTTL/time.Second) {
+		writeError(c, http.StatusBadRequest, "share expiry must be between 5 minutes and 365 days")
+		return
+	}
+	duration := time.Duration(request.ExpiresInSeconds) * time.Second
+	token, err := newShareToken()
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "failed to create share token")
+		return
+	}
+	share, err := h.repo.CreateShare(c.Request.Context(), user.ID, CreateShareInput{
+		ItemID: id, Token: token, ExpiresAt: time.Now().UTC().Add(duration),
+	})
+	if errors.Is(err, ErrNotFound) {
+		writeError(c, http.StatusNotFound, "clipboard item not found")
+		return
+	}
+	if errors.Is(err, ErrInvalidShare) {
+		writeError(c, http.StatusBadRequest, "share expiry is invalid")
+		return
+	}
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "failed to create clipboard share")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusCreated, share)
+}
+
+func (h *Handler) listShares(c *gin.Context) {
+	user, ok := auth.CurrentUser(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	limit := defaultLimit
+	if raw := c.Query("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			writeError(c, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		if parsed > maxLimit {
+			parsed = maxLimit
+		}
+		limit = parsed
+	}
+	shares, err := h.repo.ListShares(c.Request.Context(), user.ID, limit)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "failed to list clipboard shares")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{"shares": shares})
+}
+
+func (h *Handler) revokeShare(c *gin.Context) {
+	user, ok := auth.CurrentUser(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	if err := h.repo.RevokeShare(c.Request.Context(), user.ID, id); errors.Is(err, ErrNotFound) {
+		writeError(c, http.StatusNotFound, "clipboard share not found")
+		return
+	} else if err != nil {
+		writeError(c, http.StatusInternalServerError, "failed to revoke clipboard share")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+type publicShareResponse struct {
+	Item      Item      `json:"item"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (h *Handler) publicShare(c *gin.Context) {
+	share, ok := h.resolvePublicShare(c)
+	if !ok {
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.JSON(http.StatusOK, publicShareResponse{Item: share.Item, ExpiresAt: share.ExpiresAt, CreatedAt: share.CreatedAt})
+}
+
+func (h *Handler) publicShareContent(c *gin.Context) {
+	share, ok := h.resolvePublicShare(c)
+	if !ok {
+		return
+	}
+	h.serveItemContent(c, share.Item)
+}
+
+func (h *Handler) resolvePublicShare(c *gin.Context) (Share, bool) {
+	token := c.Param("token")
+	if !validShareToken(token) {
+		writeError(c, http.StatusNotFound, "clipboard share not found")
+		return Share{}, false
+	}
+	share, err := h.repo.GetPublicShare(c.Request.Context(), token)
+	if errors.Is(err, ErrNotFound) {
+		writeError(c, http.StatusNotFound, "clipboard share not found")
+		return Share{}, false
+	}
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "failed to load clipboard share")
+		return Share{}, false
+	}
+	return share, true
+}
+
+func newShareToken() (string, error) {
+	buffer := make([]byte, 32)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buffer), nil
+}
+
+func validShareToken(token string) bool {
+	if len(token) != 43 {
+		return false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	return err == nil && len(decoded) == 32
 }
 
 func (h *Handler) delete(c *gin.Context) {
