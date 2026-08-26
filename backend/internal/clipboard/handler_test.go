@@ -21,6 +21,55 @@ import (
 	"github.com/sy1063259659/suidu/backend/internal/filestore"
 )
 
+type listCaptureRepo struct {
+	items   []Item
+	userID  int64
+	filter  ListFilter
+	listErr error
+}
+
+func (r *listCaptureRepo) CreateText(context.Context, int64, string, string) (Item, error) {
+	panic("unexpected CreateText call")
+}
+
+func (r *listCaptureRepo) CreateAttachment(context.Context, int64, Attachment) (Item, error) {
+	panic("unexpected CreateAttachment call")
+}
+
+func (r *listCaptureRepo) Get(context.Context, int64, int64) (Item, error) {
+	panic("unexpected Get call")
+}
+
+func (r *listCaptureRepo) List(_ context.Context, userID int64, filter ListFilter) ([]Item, error) {
+	r.userID = userID
+	r.filter = filter
+	return r.items, r.listErr
+}
+
+func (r *listCaptureRepo) UpdateMetadata(context.Context, int64, int64, ItemMetadata) (Item, error) {
+	panic("unexpected UpdateMetadata call")
+}
+
+func (r *listCaptureRepo) Delete(context.Context, int64, int64) error {
+	panic("unexpected Delete call")
+}
+
+func (r *listCaptureRepo) CreateShare(context.Context, int64, CreateShareInput) (Share, error) {
+	panic("unexpected CreateShare call")
+}
+
+func (r *listCaptureRepo) ListShares(context.Context, int64, int) ([]Share, error) {
+	panic("unexpected ListShares call")
+}
+
+func (r *listCaptureRepo) GetPublicShare(context.Context, string) (Share, error) {
+	panic("unexpected GetPublicShare call")
+}
+
+func (r *listCaptureRepo) RevokeShare(context.Context, int64, int64) error {
+	panic("unexpected RevokeShare call")
+}
+
 func newTestRouter(repo Repository) *gin.Engine {
 	return newTestRouterWithStore(repo, filestore.NewMemoryStore(), 1, MaxFileBytes)
 }
@@ -123,6 +172,10 @@ func TestHandlerListRejectsInvalidFilters(t *testing.T) {
 		{name: "kind", url: "/api/clipboard?kind=video"},
 		{name: "query", url: "/api/clipboard?q=" + strings.Repeat("a", 201)},
 		{name: "favorite", url: "/api/clipboard?favorite=yes"},
+		{name: "invalid from", url: "/api/clipboard?from=not-a-date"},
+		{name: "invalid to", url: "/api/clipboard?to=not-a-date"},
+		{name: "from after to", url: "/api/clipboard?from=2026-08-25T10:00:00Z&to=2026-08-25T09:00:00Z"},
+		{name: "from equal to", url: "/api/clipboard?from=2026-08-25T10:00:00Z&to=2026-08-25T10:00:00Z"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -132,6 +185,34 @@ func TestHandlerListRejectsInvalidFilters(t *testing.T) {
 				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestHandlerListParsesTimeRangeFilters(t *testing.T) {
+	repo := &listCaptureRepo{
+		items: []Item{{ID: 9, UserID: 1, Kind: KindText, Content: "within range", CreatedAt: time.Date(2026, 8, 25, 10, 30, 0, 0, time.UTC)}},
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/clipboard?from=2026-08-25T10:00:00%2B08:00&to=2026-08-25T11:00:00%2B08:00", nil)
+
+	newTestRouter(repo).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	wantFrom := time.Date(2026, 8, 25, 2, 0, 0, 0, time.UTC)
+	wantTo := time.Date(2026, 8, 25, 3, 0, 0, 0, time.UTC)
+	if repo.userID != 1 {
+		t.Fatalf("list userID = %d", repo.userID)
+	}
+	if repo.filter.CreatedFrom == nil || !repo.filter.CreatedFrom.Equal(wantFrom) {
+		t.Fatalf("CreatedFrom = %#v, want %s", repo.filter.CreatedFrom, wantFrom)
+	}
+	if repo.filter.CreatedBefore == nil || !repo.filter.CreatedBefore.Equal(wantTo) {
+		t.Fatalf("CreatedBefore = %#v, want %s", repo.filter.CreatedBefore, wantTo)
+	}
+	if !strings.Contains(response.Body.String(), "within range") {
+		t.Fatalf("response body = %s", response.Body.String())
 	}
 }
 

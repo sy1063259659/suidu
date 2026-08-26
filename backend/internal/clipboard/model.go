@@ -56,10 +56,12 @@ type Attachment struct {
 }
 
 type ListFilter struct {
-	Limit        int
-	Query        string
-	Kind         Kind
-	FavoriteOnly bool
+	Limit         int
+	Query         string
+	Kind          Kind
+	FavoriteOnly  bool
+	CreatedFrom   *time.Time
+	CreatedBefore *time.Time
 }
 
 type ItemMetadata struct {
