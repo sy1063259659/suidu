@@ -12,6 +12,7 @@ ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS file_name TEXT NOT NULL DEF
 ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS media_type VARCHAR(255) NOT NULL DEFAULT '';
 ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS size_bytes BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS storage_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT '';
 ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS favorite BOOLEAN NOT NULL DEFAULT FALSE;
@@ -25,6 +26,10 @@ CREATE INDEX IF NOT EXISTS idx_clipboard_items_user_created
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_items_storage_key
     ON clipboard_items (storage_key)
     WHERE storage_key <> '';
+
+CREATE INDEX IF NOT EXISTS idx_clipboard_items_user_kind_hash
+    ON clipboard_items (user_id, kind, content_hash)
+    WHERE content_hash <> '';
 
 CREATE INDEX IF NOT EXISTS idx_clipboard_items_user_favorite
     ON clipboard_items (user_id, created_at DESC, id DESC)

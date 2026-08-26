@@ -38,7 +38,7 @@ func (r *PostgresRepository) Close() {
 	r.pool.Close()
 }
 
-const itemColumns = `id, user_id, kind, content, file_name, media_type, size_bytes, storage_key, note, source, created_at, tags, favorite`
+const itemColumns = `id, user_id, kind, content, file_name, media_type, size_bytes, storage_key, content_hash, note, source, created_at, tags, favorite`
 
 func (r *PostgresRepository) CreateText(ctx context.Context, userID int64, content, source string) (Item, error) {
 	if err := validateContent(content); err != nil {
@@ -47,10 +47,10 @@ func (r *PostgresRepository) CreateText(ctx context.Context, userID int64, conte
 
 	var item Item
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO clipboard_items (user_id, kind, content, source)
-		VALUES ($1, 'text', $2, $3)
+		INSERT INTO clipboard_items (user_id, kind, content, content_hash, source)
+		VALUES ($1, 'text', $2, $3, $4)
 		RETURNING `+itemColumns+`
-	`, userID, content, normalizeSource(source)).Scan(itemDestinations(&item)...)
+	`, userID, content, textContentHash(content), normalizeSource(source)).Scan(itemDestinations(&item)...)
 	return item, err
 }
 
@@ -60,10 +60,25 @@ func (r *PostgresRepository) CreateAttachment(ctx context.Context, userID int64,
 	}
 	var item Item
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO clipboard_items (user_id, kind, content, file_name, media_type, size_bytes, storage_key, source)
-		VALUES ($1, $2, '', $3, $4, $5, $6, $7)
+		INSERT INTO clipboard_items (user_id, kind, content, file_name, media_type, size_bytes, storage_key, content_hash, source)
+		VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8)
 		RETURNING `+itemColumns+`
-	`, userID, attachment.Kind, normalizeFileName(attachment.FileName), attachment.MediaType, attachment.SizeBytes, attachment.StorageKey, normalizeSource(attachment.Source)).Scan(itemDestinations(&item)...)
+	`, userID, attachment.Kind, normalizeFileName(attachment.FileName), attachment.MediaType, attachment.SizeBytes, attachment.StorageKey, attachment.ContentHash, normalizeSource(attachment.Source)).Scan(itemDestinations(&item)...)
+	return item, err
+}
+
+func (r *PostgresRepository) FindDuplicate(ctx context.Context, userID int64, kind Kind, contentHash string) (Item, error) {
+	var item Item
+	err := r.pool.QueryRow(ctx, `
+		SELECT `+itemColumns+`
+		FROM clipboard_items
+		WHERE user_id = $1 AND kind = $2 AND content_hash = $3
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, userID, kind, contentHash).Scan(itemDestinations(&item)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Item{}, ErrNotFound
+	}
 	return item, err
 }
 
@@ -138,7 +153,7 @@ func timeValueOrNil(value *time.Time) any {
 }
 
 func itemDestinations(item *Item) []any {
-	return []any{&item.ID, &item.UserID, &item.Kind, &item.Content, &item.FileName, &item.MediaType, &item.SizeBytes, &item.StorageKey, &item.Note, &item.Source, &item.CreatedAt, &item.Tags, &item.Favorite}
+	return []any{&item.ID, &item.UserID, &item.Kind, &item.Content, &item.FileName, &item.MediaType, &item.SizeBytes, &item.StorageKey, &item.ContentHash, &item.Note, &item.Source, &item.CreatedAt, &item.Tags, &item.Favorite}
 }
 
 func (r *PostgresRepository) UpdateMetadata(ctx context.Context, userID, id int64, metadata ItemMetadata) (Item, error) {
@@ -177,7 +192,7 @@ func (r *PostgresRepository) AssignOrphanedItems(ctx context.Context, userID int
 
 const shareItemColumns = `
 	s.id, s.user_id, s.token, s.expires_at, s.revoked_at, s.created_at,
-	i.id, i.user_id, i.kind, i.content, i.file_name, i.media_type, i.size_bytes, i.storage_key, i.note, i.source, i.created_at, i.tags, i.favorite`
+	i.id, i.user_id, i.kind, i.content, i.file_name, i.media_type, i.size_bytes, i.storage_key, i.content_hash, i.note, i.source, i.created_at, i.tags, i.favorite`
 
 func (r *PostgresRepository) CreateShare(ctx context.Context, userID int64, input CreateShareInput) (Share, error) {
 	now := time.Now().UTC()

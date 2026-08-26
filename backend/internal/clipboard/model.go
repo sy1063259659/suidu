@@ -31,28 +31,30 @@ const (
 )
 
 type Item struct {
-	ID         int64     `json:"id"`
-	UserID     int64     `json:"-"`
-	Kind       Kind      `json:"kind"`
-	Content    string    `json:"content,omitempty"`
-	FileName   string    `json:"fileName,omitempty"`
-	MediaType  string    `json:"mediaType,omitempty"`
-	SizeBytes  int64     `json:"sizeBytes,omitempty"`
-	StorageKey string    `json:"-"`
-	Note       string    `json:"note,omitempty"`
-	Source     string    `json:"source"`
-	CreatedAt  time.Time `json:"createdAt"`
-	Tags       []string  `json:"tags,omitempty"`
-	Favorite   bool      `json:"favorite,omitempty"`
+	ID          int64     `json:"id"`
+	UserID      int64     `json:"-"`
+	Kind        Kind      `json:"kind"`
+	Content     string    `json:"content,omitempty"`
+	FileName    string    `json:"fileName,omitempty"`
+	MediaType   string    `json:"mediaType,omitempty"`
+	SizeBytes   int64     `json:"sizeBytes,omitempty"`
+	StorageKey  string    `json:"-"`
+	ContentHash string    `json:"-"`
+	Note        string    `json:"note,omitempty"`
+	Source      string    `json:"source"`
+	CreatedAt   time.Time `json:"createdAt"`
+	Tags        []string  `json:"tags,omitempty"`
+	Favorite    bool      `json:"favorite,omitempty"`
 }
 
 type Attachment struct {
-	Kind       Kind
-	FileName   string
-	MediaType  string
-	SizeBytes  int64
-	StorageKey string
-	Source     string
+	Kind        Kind
+	FileName    string
+	MediaType   string
+	SizeBytes   int64
+	StorageKey  string
+	ContentHash string
+	Source      string
 }
 
 type ListFilter struct {
@@ -81,4 +83,5 @@ type Repository interface {
 	ListShares(ctx context.Context, userID int64, limit int) ([]Share, error)
 	GetPublicShare(ctx context.Context, token string) (Share, error)
 	RevokeShare(ctx context.Context, userID, id int64) error
+	FindDuplicate(ctx context.Context, userID int64, kind Kind, contentHash string) (Item, error)
 }
