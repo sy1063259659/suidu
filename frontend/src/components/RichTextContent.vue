@@ -48,7 +48,8 @@ markdownRenderer.renderer.rules.link_open = secureLinkOpen
 
 const format = computed(() => detectTextFormat(props.content))
 const long = computed(() => isLongText(props.content))
-const shouldClamp = computed(() => props.preview && long.value)
+const clampableKinds = new Set(['text', 'markdown', 'code', 'json'])
+const shouldClamp = computed(() => props.preview && long.value && clampableKinds.has(format.value.kind))
 const detailActionLabel = '前往详情页'
 const detailActionAriaLabel = '前往详情页查看完整内容'
 const highlightedCode = computed(() => {

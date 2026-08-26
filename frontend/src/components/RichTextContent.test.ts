@@ -29,4 +29,15 @@ describe('RichTextContent', () => {
     expect(html).not.toContain('preview-detail-entry')
     expect(html).not.toContain('aria-label="前往详情页查看完整内容"')
   })
+
+  it('does not show clamp affordances for long standalone urls in preview', async () => {
+    const longUrl = `https://example.com/${'path-segment/'.repeat(40)}?q=${'search-term-'.repeat(20)}`
+    const html = await renderRichTextContent({ content: longUrl, preview: true })
+
+    expect(html).toContain('class="standalone-link"')
+    expect(html).not.toContain('is-preview-clamped')
+    expect(html).not.toContain('preview-detail-entry')
+    expect(html).not.toContain('content-clamp-fade')
+    expect(html).not.toContain('aria-label="前往详情页查看完整内容"')
+  })
 })
