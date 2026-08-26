@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { File, Image } from '@lucide/vue'
 import { clipboardContentUrl, type ClipboardItem } from '../api/clipboard'
+import RichTextContent from './RichTextContent.vue'
 
 const props = defineProps<{
   item: ClipboardItem
   contentUrl?: (download?: boolean) => string
+  preview?: boolean
 }>()
+const emit = defineEmits<{ viewDetail: [] }>()
 
 function itemContentUrl(download = false) {
   return props.contentUrl?.(download) ?? clipboardContentUrl(props.item.id, download)
@@ -20,7 +23,7 @@ function formatFileSize(value = 0) {
 </script>
 
 <template>
-  <div v-if="item.kind === 'text' || !item.kind" class="history-content">{{ item.content }}</div>
+  <RichTextContent v-if="item.kind === 'text' || !item.kind" :content="item.content || ''" :preview="preview" @view-detail="emit('viewDetail')" />
   <div v-else-if="item.kind === 'image'" class="attachment-content image-attachment">
     <a :href="itemContentUrl()" target="_blank" rel="noopener" class="image-preview-link">
       <img :src="itemContentUrl()" :alt="item.fileName || '剪贴板图片'" loading="lazy" />
