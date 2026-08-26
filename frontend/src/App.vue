@@ -138,6 +138,21 @@ function errorMessage(errorValue: unknown, fallback: string) {
   return fallback
 }
 
+function duplicateItemFromError(errorValue: unknown): ClipboardItem | null {
+  if (!axios.isAxiosError(errorValue) || errorValue.response?.status !== 409) return null
+  const duplicate = errorValue.response.data?.duplicate
+  return duplicate && typeof duplicate.id === 'number' ? duplicate as ClipboardItem : null
+}
+
+function duplicateDescription(item: ClipboardItem) {
+  if (item.kind === 'text') return '相同文本'
+  return item.fileName ? `相同文件“${item.fileName}”` : '相同文件'
+}
+
+function confirmDuplicate(item: ClipboardItem) {
+  return window.confirm(`${duplicateDescription(item)}已存在于剪贴板记录中，是否仍要创建一条新的记录？`)
+}
+
 async function loadItems() {
   const requestSequence = ++listRequestSequence
   loading.value = true
@@ -256,7 +271,16 @@ async function submitClipboard() {
   if (!canSubmit.value) return
   submitting.value = true; error.value = ''
   try {
-    const item = await createClipboard(draft.value.trim())
+    const content = draft.value.trim()
+    let item: ClipboardItem
+    try {
+      item = await createClipboard(content)
+    } catch (errorValue) {
+      const duplicate = duplicateItemFromError(errorValue)
+      if (!duplicate) throw errorValue
+      if (!confirmDuplicate(duplicate)) { apiStatus.value = 'online'; return }
+      item = await createClipboard(content, 'web', true)
+    }
     if (hasActiveFilters.value) void loadItems()
     else items.value = [item, ...items.value]
     draft.value = ''
@@ -279,10 +303,23 @@ async function submitFileUpload(file: File, uploadId: string, callbacks: UploadC
   uploadError.value = ''
   uploadProgress.value = { ...uploadProgress.value, [uploadId]: 0 }
   try {
-    const item = await uploadClipboardFile(file, 'web', (percent) => {
+    const onProgress = (percent: number) => {
       uploadProgress.value = { ...uploadProgress.value, [uploadId]: percent }
       callbacks.onProgress?.(percent)
-    })
+    }
+    let item: ClipboardItem
+    try {
+      item = await uploadClipboardFile(file, 'web', onProgress)
+    } catch (errorValue) {
+      const duplicate = duplicateItemFromError(errorValue)
+      if (!duplicate) throw errorValue
+      if (!confirmDuplicate(duplicate)) {
+        apiStatus.value = 'online'
+        callbacks.onFinish?.()
+        return
+      }
+      item = await uploadClipboardFile(file, 'web', onProgress, true)
+    }
     if (hasActiveFilters.value) void loadItems()
     else items.value = [item, ...items.value]
     apiStatus.value = 'online'

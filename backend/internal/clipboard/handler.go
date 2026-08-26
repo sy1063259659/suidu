@@ -2,8 +2,11 @@ package clipboard
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -80,8 +83,9 @@ func (h *Handler) RegisterPublicRoutes(router gin.IRouter) {
 }
 
 type createRequest struct {
-	Content string `json:"content"`
-	Source  string `json:"source"`
+	Content        string `json:"content"`
+	Source         string `json:"source"`
+	AllowDuplicate bool   `json:"allowDuplicate"`
 }
 
 func (h *Handler) list(c *gin.Context) {
@@ -188,6 +192,21 @@ func (h *Handler) create(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "request body must be valid JSON")
 		return
 	}
+	if err := validateContent(request.Content); errors.Is(err, ErrEmptyContent) || errors.Is(err, ErrContentTooLarge) {
+		writeError(c, http.StatusBadRequest, "content must not be empty and must be at most 1 MiB")
+		return
+	}
+	if !request.AllowDuplicate {
+		duplicate, duplicateErr := h.findDuplicate(c.Request.Context(), user.ID, KindText, textContentHash(request.Content))
+		if duplicateErr == nil {
+			writeDuplicate(c, duplicate)
+			return
+		}
+		if !errors.Is(duplicateErr, ErrNotFound) {
+			writeError(c, http.StatusInternalServerError, "failed to check duplicate clipboard item")
+			return
+		}
+	}
 
 	item, err := h.repo.CreateText(c.Request.Context(), user.ID, request.Content, request.Source)
 	if errors.Is(err, ErrEmptyContent) || errors.Is(err, ErrContentTooLarge) {
@@ -222,6 +241,7 @@ func (h *Handler) upload(c *gin.Context) {
 		writeError(c, http.StatusRequestEntityTooLarge, h.fileLimitMessage())
 		return
 	}
+	allowDuplicate := c.PostForm("allowDuplicate") == "true"
 	file, err := header.Open()
 	if err != nil {
 		writeError(c, http.StatusBadRequest, "failed to read uploaded file")
@@ -241,7 +261,8 @@ func (h *Handler) upload(c *gin.Context) {
 	if isSafeImageType(mediaType) {
 		kind = KindImage
 	}
-	object, err := h.files.Put(c.Request.Context(), user.ID, filepath.Ext(header.Filename), io.MultiReader(bytes.NewReader(prefix), file), h.maxFileBytes)
+	digest := sha256.New()
+	object, err := h.files.Put(c.Request.Context(), user.ID, filepath.Ext(header.Filename), io.TeeReader(io.MultiReader(bytes.NewReader(prefix), file), digest), h.maxFileBytes)
 	if errors.Is(err, filestore.ErrTooLarge) {
 		writeError(c, http.StatusRequestEntityTooLarge, h.fileLimitMessage())
 		return
@@ -250,8 +271,22 @@ func (h *Handler) upload(c *gin.Context) {
 		writeError(c, http.StatusInternalServerError, "failed to store uploaded file")
 		return
 	}
+	contentHash := hex.EncodeToString(digest.Sum(nil))
+	if !allowDuplicate {
+		duplicate, duplicateErr := h.findDuplicate(c.Request.Context(), user.ID, kind, contentHash)
+		if duplicateErr == nil {
+			_ = h.files.Delete(c.Request.Context(), object.Key)
+			writeDuplicate(c, duplicate)
+			return
+		}
+		if !errors.Is(duplicateErr, ErrNotFound) {
+			_ = h.files.Delete(c.Request.Context(), object.Key)
+			writeError(c, http.StatusInternalServerError, "failed to check duplicate clipboard item")
+			return
+		}
+	}
 	item, err := h.repo.CreateAttachment(c.Request.Context(), user.ID, Attachment{
-		Kind: kind, FileName: header.Filename, MediaType: mediaType, SizeBytes: object.Size, StorageKey: object.Key, Source: c.PostForm("source"),
+		Kind: kind, FileName: header.Filename, MediaType: mediaType, SizeBytes: object.Size, StorageKey: object.Key, ContentHash: contentHash, Source: c.PostForm("source"),
 	})
 	if err != nil {
 		_ = h.files.Delete(c.Request.Context(), object.Key)
@@ -559,4 +594,42 @@ func (h *Handler) fileLimitMessage() string {
 
 func writeError(c *gin.Context, status int, message string) {
 	c.JSON(status, gin.H{"error": message})
+}
+
+func (h *Handler) findDuplicate(ctx context.Context, userID int64, kind Kind, contentHash string) (Item, error) {
+	item, err := h.repo.FindDuplicate(ctx, userID, kind, contentHash)
+	if err == nil || !errors.Is(err, ErrNotFound) {
+		return item, err
+	}
+	items, err := h.repo.List(ctx, userID, ListFilter{Kind: kind})
+	if err != nil {
+		return Item{}, err
+	}
+	for _, candidate := range items {
+		candidateHash := candidate.ContentHash
+		if candidateHash == "" && kind == KindText {
+			candidateHash = textContentHash(candidate.Content)
+		}
+		if candidateHash == "" && candidate.StorageKey != "" {
+			reader, openErr := h.files.Open(ctx, candidate.StorageKey)
+			if openErr != nil {
+				continue
+			}
+			digest := sha256.New()
+			_, copyErr := io.Copy(digest, reader)
+			_ = reader.Close()
+			if copyErr == nil {
+				candidateHash = hex.EncodeToString(digest.Sum(nil))
+			}
+		}
+		if candidateHash != "" && candidateHash == contentHash {
+			return candidate, nil
+		}
+	}
+	return Item{}, ErrNotFound
+}
+
+func writeDuplicate(c *gin.Context, item Item) {
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusConflict, gin.H{"error": "duplicate clipboard item", "duplicate": item})
 }

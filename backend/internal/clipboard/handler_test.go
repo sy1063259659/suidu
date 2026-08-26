@@ -70,6 +70,10 @@ func (r *listCaptureRepo) RevokeShare(context.Context, int64, int64) error {
 	panic("unexpected RevokeShare call")
 }
 
+func (r *listCaptureRepo) FindDuplicate(context.Context, int64, Kind, string) (Item, error) {
+	panic("unexpected FindDuplicate call")
+}
+
 func newTestRouter(repo Repository) *gin.Engine {
 	return newTestRouterWithStore(repo, filestore.NewMemoryStore(), 1, MaxFileBytes)
 }
@@ -111,6 +115,28 @@ func TestHandlerCreateListDelete(t *testing.T) {
 	router.ServeHTTP(deleteResponse, httptest.NewRequest(http.MethodDelete, "/api/clipboard/"+strconv.FormatInt(created.ID, 10), nil))
 	if deleteResponse.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, body = %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+}
+
+func TestHandlerRejectsDuplicateTextUnlessExplicitlyAllowed(t *testing.T) {
+	router := newTestRouter(NewMemoryRepository())
+	create := func(body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/clipboard", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	if response := create(`{"content":"  hello\r\nworld  "}`); response.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d, body = %s", response.Code, response.Body.String())
+	}
+	duplicate := create(`{"content":"hello\nworld"}`)
+	if duplicate.Code != http.StatusConflict || !strings.Contains(duplicate.Body.String(), `"duplicate"`) {
+		t.Fatalf("duplicate status = %d, body = %s", duplicate.Code, duplicate.Body.String())
+	}
+	allowed := create(`{"content":"hello\nworld","allowDuplicate":true}`)
+	if allowed.Code != http.StatusCreated {
+		t.Fatalf("allowed duplicate status = %d, body = %s", allowed.Code, allowed.Body.String())
 	}
 }
 
@@ -256,6 +282,27 @@ func TestHandlerUploadDownloadAndDeleteImage(t *testing.T) {
 	}
 	if _, err := files.Open(t.Context(), stored.StorageKey); !errors.Is(err, filestore.ErrNotFound) {
 		t.Fatalf("expected stored content deletion, got %v", err)
+	}
+}
+
+func TestHandlerRejectsDuplicateAttachmentAndCleansTemporaryObject(t *testing.T) {
+	repo := NewMemoryRepository()
+	files := filestore.NewMemoryStore()
+	router := newTestRouterWithStore(repo, files, 1, 1024)
+	content := []byte("same file content")
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, multipartRequest(t, "/api/clipboard/files", "one.txt", "text/plain", content))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first upload status = %d, body = %s", first.Code, first.Body.String())
+	}
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, multipartRequest(t, "/api/clipboard/files", "two.txt", "text/plain", content))
+	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), `"duplicate"`) {
+		t.Fatalf("duplicate upload status = %d, body = %s", second.Code, second.Body.String())
+	}
+	items, err := repo.List(t.Context(), 1, ListFilter{})
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items after duplicate upload = %#v, err = %v", items, err)
 	}
 }
 

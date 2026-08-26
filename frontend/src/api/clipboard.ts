@@ -51,15 +51,16 @@ export async function updateClipboardMetadata(id: number, note: string, tags: st
   return data
 }
 
-export async function createClipboard(content: string, source = 'web'): Promise<ClipboardItem> {
-  const { data } = await api.post<ClipboardItem>('/clipboard', { content, source })
+export async function createClipboard(content: string, source = 'web', allowDuplicate = false): Promise<ClipboardItem> {
+  const { data } = await api.post<ClipboardItem>('/clipboard', { content, source, allowDuplicate })
   return data
 }
 
-export async function uploadClipboardFile(file: File, source = 'web', onProgress?: (percent: number) => void): Promise<ClipboardItem> {
+export async function uploadClipboardFile(file: File, source = 'web', onProgress?: (percent: number) => void, allowDuplicate = false): Promise<ClipboardItem> {
   const form = new FormData()
   form.append('file', file)
   form.append('source', source)
+  form.append('allowDuplicate', String(allowDuplicate))
   const { data } = await api.post<ClipboardItem>('/clipboard/files', form, {
     onUploadProgress: (event) => {
       if (event.total) onProgress?.(Math.round((event.loaded / event.total) * 100))

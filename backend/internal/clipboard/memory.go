@@ -32,12 +32,13 @@ func (r *MemoryRepository) CreateText(_ context.Context, userID int64, content, 
 	defer r.mu.Unlock()
 
 	item := Item{
-		ID:        r.nextID,
-		UserID:    userID,
-		Kind:      KindText,
-		Content:   content,
-		Source:    normalizeSource(source),
-		CreatedAt: r.now().UTC(),
+		ID:          r.nextID,
+		UserID:      userID,
+		Kind:        KindText,
+		Content:     content,
+		ContentHash: textContentHash(content),
+		Source:      normalizeSource(source),
+		CreatedAt:   r.now().UTC(),
 	}
 	r.nextID++
 	r.items[item.ID] = item
@@ -51,19 +52,31 @@ func (r *MemoryRepository) CreateAttachment(_ context.Context, userID int64, att
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	item := Item{
-		ID:         r.nextID,
-		UserID:     userID,
-		Kind:       attachment.Kind,
-		FileName:   normalizeFileName(attachment.FileName),
-		MediaType:  attachment.MediaType,
-		SizeBytes:  attachment.SizeBytes,
-		StorageKey: attachment.StorageKey,
-		Source:     normalizeSource(attachment.Source),
-		CreatedAt:  r.now().UTC(),
+		ID:          r.nextID,
+		UserID:      userID,
+		Kind:        attachment.Kind,
+		FileName:    normalizeFileName(attachment.FileName),
+		MediaType:   attachment.MediaType,
+		SizeBytes:   attachment.SizeBytes,
+		StorageKey:  attachment.StorageKey,
+		ContentHash: attachment.ContentHash,
+		Source:      normalizeSource(attachment.Source),
+		CreatedAt:   r.now().UTC(),
 	}
 	r.nextID++
 	r.items[item.ID] = item
 	return item, nil
+}
+
+func (r *MemoryRepository) FindDuplicate(_ context.Context, userID int64, kind Kind, contentHash string) (Item, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, item := range r.items {
+		if item.UserID == userID && item.Kind == kind && contentHash != "" && item.ContentHash == contentHash {
+			return item, nil
+		}
+	}
+	return Item{}, ErrNotFound
 }
 
 func (r *MemoryRepository) Get(_ context.Context, userID, id int64) (Item, error) {
