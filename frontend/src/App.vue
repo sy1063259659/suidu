@@ -16,6 +16,7 @@ import { createClipboardShare, listClipboardShares, publicShareUrl, revokeClipbo
 import ClipboardItemContent from './components/ClipboardItemContent.vue'
 import ClipboardDetailPage from './components/ClipboardDetailPage.vue'
 import PublicSharePage from './components/PublicSharePage.vue'
+import { captureResultsHeight, preservedResultsStyle } from './utils/historyLayout'
 
 const publicToken = window.location.pathname.match(/^\/s\/([A-Za-z0-9_-]+)\/?$/)?.[1] ?? ''
 function detailIDFromPath() {
@@ -71,6 +72,7 @@ const itemKindFilter = ref<'all' | ClipboardItemKind>('all')
 const favoritesOnly = ref(false)
 const historyResultsElement = ref<HTMLElement | null>(null)
 const favoriteResultsMinHeight = ref(0)
+const favoritesFilterTransitioning = ref(false)
 const favoriteUpdatingId = ref<number | null>(null)
 const tagModalOpen = ref(false)
 const tagItem = shallowRef<ClipboardItem | null>(null)
@@ -100,6 +102,10 @@ const averageUploadProgress = computed(() => {
 })
 const hasActiveFilters = computed(() => searchQuery.value.trim() !== '' || itemKindFilter.value !== 'all' || favoritesOnly.value)
 const emptyHistoryDescription = computed(() => hasActiveFilters.value ? '没有找到匹配的记录' : '还没有剪贴板记录')
+const historyResultsStyle = computed(() => preservedResultsStyle(
+  favoriteResultsMinHeight.value,
+  favoritesOnly.value || favoritesFilterTransitioning.value,
+))
 
 let searchTimer: ReturnType<typeof window.setTimeout> | undefined
 let listRequestSequence = 0
@@ -128,7 +134,10 @@ async function loadItems() {
     apiStatus.value = 'offline'
     error.value = '无法连接服务，请稍后重试。'
   } finally {
-    if (requestSequence === listRequestSequence) loading.value = false
+    if (requestSequence === listRequestSequence) {
+      loading.value = false
+      favoritesFilterTransitioning.value = false
+    }
   }
 }
 
@@ -380,9 +389,8 @@ function searchTag(tag: string) {
 }
 
 function toggleFavoritesFilter() {
-  if (!favoritesOnly.value) {
-    favoriteResultsMinHeight.value = Math.ceil(historyResultsElement.value?.getBoundingClientRect().height ?? 0)
-  }
+  favoriteResultsMinHeight.value = captureResultsHeight(historyResultsElement.value?.getBoundingClientRect().height ?? 0)
+  favoritesFilterTransitioning.value = true
   favoritesOnly.value = !favoritesOnly.value
 }
 
@@ -582,7 +590,7 @@ onUnmounted(() => {
                 <template #icon><Star :size="16" :fill="favoritesOnly ? 'currentColor' : 'none'" /></template>收藏
               </n-button>
             </div>
-            <div ref="historyResultsElement" class="history-results" :style="favoritesOnly && favoriteResultsMinHeight ? { minHeight: `${favoriteResultsMinHeight}px` } : undefined">
+            <div ref="historyResultsElement" class="history-results" :style="historyResultsStyle">
             <n-empty v-if="!items.length" :description="loading ? '正在加载记录' : emptyHistoryDescription" class="empty-state" />
             <n-list v-else class="history-list" bordered>
               <n-list-item v-for="item in items" :key="item.id">
