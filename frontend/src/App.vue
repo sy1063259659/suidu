@@ -4,7 +4,7 @@ import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, Eye, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Tags, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NButtonGroup, NCard, NDynamicTags, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
-  NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
+  NDatePicker, NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
   type UploadCustomRequestOptions,
 } from 'naive-ui'
 import {
@@ -17,6 +17,14 @@ import ClipboardItemContent from './components/ClipboardItemContent.vue'
 import ClipboardDetailPage from './components/ClipboardDetailPage.vue'
 import PublicSharePage from './components/PublicSharePage.vue'
 import { captureResultsHeight, preservedResultsStyle } from './utils/historyLayout'
+import {
+  applyCustomTimeFilter,
+  applyTimePreset,
+  resolveTimeRange,
+  toClipboardTimeParams,
+  type DateRangeValue,
+  type TimeFilterPreset,
+} from './utils/timeline'
 
 const publicToken = window.location.pathname.match(/^\/s\/([A-Za-z0-9_-]+)\/?$/)?.[1] ?? ''
 function detailIDFromPath() {
@@ -70,6 +78,8 @@ const activeView = ref<'clipboard' | 'shares' | 'admin'>('clipboard')
 const searchQuery = ref('')
 const itemKindFilter = ref<'all' | ClipboardItemKind>('all')
 const favoritesOnly = ref(false)
+const timePreset = ref<TimeFilterPreset>('all')
+const customTimeRange = ref<DateRangeValue>(null)
 const historyResultsElement = ref<HTMLElement | null>(null)
 const favoriteResultsMinHeight = ref(0)
 const favoritesFilterTransitioning = ref(false)
@@ -86,6 +96,12 @@ const itemKindOptions: Array<{ label: string; value: 'all' | ClipboardItemKind }
   { label: '图片', value: 'image' },
   { label: '文件', value: 'file' },
 ]
+const timePresetOptions: Array<{ label: string; value: Exclude<TimeFilterPreset, 'custom'> }> = [
+  { label: '全部时间', value: 'all' },
+  { label: '今天', value: 'today' },
+  { label: '近 7 天', value: 'last7Days' },
+  { label: '近 30 天', value: 'last30Days' },
+]
 const shareExpiryOptions = [
   { label: '1 小时', value: 3600 },
   { label: '1 天', value: 86400 },
@@ -100,7 +116,12 @@ const averageUploadProgress = computed(() => {
   const values = Object.values(uploadProgress.value)
   return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0
 })
-const hasActiveFilters = computed(() => searchQuery.value.trim() !== '' || itemKindFilter.value !== 'all' || favoritesOnly.value)
+const hasActiveFilters = computed(() => (
+  searchQuery.value.trim() !== ''
+  || itemKindFilter.value !== 'all'
+  || favoritesOnly.value
+  || timePreset.value !== 'all'
+))
 const emptyHistoryDescription = computed(() => hasActiveFilters.value ? '没有找到匹配的记录' : '还没有剪贴板记录')
 const historyResultsStyle = computed(() => preservedResultsStyle(
   favoriteResultsMinHeight.value,
@@ -121,10 +142,13 @@ async function loadItems() {
   error.value = ''
   if (apiStatus.value !== 'online') apiStatus.value = 'checking'
   try {
+    const timeParams = toClipboardTimeParams(resolveTimeRange(timePreset.value, customTimeRange.value, new Date()))
     const result = await listClipboard({
       query: searchQuery.value,
       kind: itemKindFilter.value === 'all' ? undefined : itemKindFilter.value,
       favoriteOnly: favoritesOnly.value,
+      createdFrom: timeParams.createdFrom,
+      createdBefore: timeParams.createdBefore,
     })
     if (requestSequence !== listRequestSequence) return
     items.value = result
@@ -388,10 +412,37 @@ function searchTag(tag: string) {
   searchQuery.value = tag
 }
 
-function toggleFavoritesFilter() {
+function prepareFavoritesFilterTransition() {
   favoriteResultsMinHeight.value = captureResultsHeight(historyResultsElement.value?.getBoundingClientRect().height ?? 0)
   favoritesFilterTransitioning.value = true
+}
+
+function toggleFavoritesFilter() {
+  prepareFavoritesFilterTransition()
   favoritesOnly.value = !favoritesOnly.value
+}
+
+function selectTimePreset(preset: Exclude<TimeFilterPreset, 'custom'>) {
+  const next = applyTimePreset(preset)
+  timePreset.value = next.preset
+  customTimeRange.value = next.customRange
+}
+
+function handleCustomTimeRangeChange(value: DateRangeValue) {
+  const next = applyCustomTimeFilter(value)
+  timePreset.value = next.preset
+  customTimeRange.value = next.customRange
+}
+
+function clearFilters() {
+  if (!hasActiveFilters.value) return
+  if (favoritesOnly.value) prepareFavoritesFilterTransition()
+  searchQuery.value = ''
+  itemKindFilter.value = 'all'
+  favoritesOnly.value = false
+  const next = applyTimePreset('all')
+  timePreset.value = next.preset
+  customTimeRange.value = next.customRange
 }
 
 function openShareModal(item: ClipboardItem) {
@@ -446,7 +497,7 @@ async function refreshActiveView() {
 function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function handleKeydown(event: KeyboardEvent) { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
 
-watch([searchQuery, itemKindFilter, favoritesOnly], () => {
+watch([searchQuery, itemKindFilter, favoritesOnly, timePreset, customTimeRange], () => {
   if (searchTimer) window.clearTimeout(searchTimer)
   listRequestSequence++
   loading.value = false
@@ -586,8 +637,18 @@ onUnmounted(() => {
                   </n-button>
                 </n-button-group>
               </div>
+              <div class="history-filter-scroll" role="group" aria-label="按时间筛选">
+                <n-button-group class="history-filter-group">
+                  <n-button v-for="option in timePresetOptions" :key="option.value" :type="timePreset === option.value ? 'primary' : 'default'" :secondary="timePreset === option.value" @click="selectTimePreset(option.value)">
+                    {{ option.label }}
+                  </n-button>
+                </n-button-group>
+              </div>
+              <n-date-picker :value="customTimeRange" class="history-date-range" type="daterange" clearable format="yyyy-MM-dd" start-placeholder="开始日期" end-placeholder="结束日期" @update:value="handleCustomTimeRangeChange" />
               <n-button class="favorites-filter" :type="favoritesOnly ? 'warning' : 'default'" :secondary="favoritesOnly" @click="toggleFavoritesFilter">
                 <template #icon><Star :size="16" :fill="favoritesOnly ? 'currentColor' : 'none'" /></template>收藏
+              </n-button>
+              <n-button v-if="hasActiveFilters" quaternary class="history-reset-filters" @click="clearFilters">清除筛选
               </n-button>
             </div>
             <div ref="historyResultsElement" class="history-results" :style="historyResultsStyle">

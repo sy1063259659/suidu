@@ -78,12 +78,14 @@ h2 { font-size: 21px; }
 .history-results { min-height: 410px; }
 .section-heading { align-items: center; margin-bottom: 14px; }
 .section-heading .eyebrow { margin-bottom: 5px; }
-.history-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.history-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
 .history-search { flex: 1 1 360px; min-width: 180px; }
 .history-filter-scroll { flex: 0 0 auto; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .history-filter-scroll::-webkit-scrollbar { display: none; }
 .history-filter-group { white-space: nowrap; }
+.history-date-range { flex: 0 1 290px; min-width: 240px; }
 .favorites-filter { flex: 0 0 auto; }
+.history-reset-filters { flex: 0 0 auto; }
 .history-heading-status { display: flex; align-items: center; gap: 8px; }
 .history-list { overflow: hidden; border-radius: 8px; background: #fff; }
 .history-item { width: 100%; min-width: 0; }
@@ -212,7 +214,9 @@ h2 { font-size: 21px; }
   .history-search { flex-basis: auto; width: 100%; }
   .history-filter-scroll { width: 100%; padding-bottom: 2px; }
   .history-filter-group .n-button { min-height: 40px; }
+  .history-date-range { width: 100%; min-width: 0; }
   .favorites-filter { align-self: flex-start; min-height: 40px; }
+  .history-reset-filters { align-self: flex-start; }
   .history-meta > .n-space:last-child { flex-wrap: wrap; }
   .history-section { min-height: 440px; }
   .history-results { min-height: 330px; }
