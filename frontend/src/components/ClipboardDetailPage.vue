@@ -45,29 +45,37 @@ function formatDate(value: string) {
         <template #extra><n-button secondary @click="emit('back')">返回剪贴板</n-button></template>
       </n-empty>
       <template v-else>
-        <div class="detail-heading">
-          <div><p class="eyebrow">CLIPBOARD DETAIL</p><h1>记录详情</h1></div>
-          <n-space :size="8" align="center">
-            <n-tag :bordered="false" type="info"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ formatLabel }}</n-tag>
-            <n-tag v-if="item.favorite" :bordered="false" type="warning"><template #icon><Star :size="12" fill="currentColor" /></template>已收藏</n-tag>
-          </n-space>
-        </div>
+        <section class="detail-header">
+          <div class="detail-heading">
+            <div class="detail-heading-copy">
+              <p class="eyebrow">CLIPBOARD DETAIL</p>
+              <h1>记录详情</h1>
+              <n-text depth="3" class="detail-created-at">创建于 {{ formatDate(item.createdAt) }}</n-text>
+            </div>
+            <n-space class="detail-heading-status" :size="8" align="center">
+              <n-tag :bordered="false" type="info"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ formatLabel }}</n-tag>
+              <n-tag v-if="item.favorite" :bordered="false" type="warning"><template #icon><Star :size="12" fill="currentColor" /></template>已收藏</n-tag>
+            </n-space>
+          </div>
+
+          <div class="detail-toolbar">
+            <div class="detail-actions">
+              <n-button class="detail-action-button" :type="item.favorite ? 'warning' : 'default'" secondary :disabled="favoriteUpdating" :aria-busy="favoriteUpdating" @click="emit('favorite', item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template>{{ item.favorite ? '取消收藏' : '收藏' }}</n-button>
+              <n-button v-if="item.kind === 'text' || !item.kind" class="detail-action-button" secondary @click="emit('copy', item)"><template #icon><Copy :size="16" /></template>{{ copied ? '已复制' : '复制' }}</n-button>
+              <n-button v-else tag="a" class="detail-action-button" :href="clipboardContentUrl(item.id, true)" secondary><template #icon><Download :size="16" /></template>下载</n-button>
+              <n-button class="detail-action-button" secondary @click="emit('organize', item)"><template #icon><Tags :size="16" /></template>整理</n-button>
+              <n-button class="detail-action-button" secondary @click="emit('share', item)"><template #icon><Share2 :size="16" /></template>分享</n-button>
+              <n-popconfirm @positive-click="emit('delete', item)">
+                <template #trigger><n-button class="detail-action-button detail-delete-action" secondary><template #icon><Trash2 :size="16" /></template>删除</n-button></template>
+                确定删除这条记录吗？
+              </n-popconfirm>
+            </div>
+          </div>
+        </section>
 
         <div class="detail-content"><ClipboardItemContent :item="item" /></div>
         <section v-if="item.note" class="detail-note"><span>备注</span><p>{{ item.note }}</p></section>
         <div v-if="item.tags?.length" class="item-tags detail-tags" aria-label="记录标签"><n-tag v-for="tag in item.tags" :key="tag" round :bordered="false" type="info">{{ tag }}</n-tag></div>
-
-        <div class="detail-footer">
-          <n-text depth="3">创建于 {{ formatDate(item.createdAt) }}</n-text>
-          <div class="detail-actions">
-            <n-button :type="item.favorite ? 'warning' : 'default'" secondary :disabled="favoriteUpdating" :aria-busy="favoriteUpdating" @click="emit('favorite', item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template>{{ item.favorite ? '取消收藏' : '收藏' }}</n-button>
-            <n-button v-if="item.kind === 'text' || !item.kind" secondary @click="emit('copy', item)"><template #icon><Copy :size="16" /></template>{{ copied ? '已复制' : '复制' }}</n-button>
-            <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" secondary><template #icon><Download :size="16" /></template>下载</n-button>
-            <n-button secondary @click="emit('organize', item)"><template #icon><Tags :size="16" /></template>整理</n-button>
-            <n-button secondary @click="emit('share', item)"><template #icon><Share2 :size="16" /></template>分享</n-button>
-            <n-popconfirm @positive-click="emit('delete', item)"><template #trigger><n-button secondary type="error"><template #icon><Trash2 :size="16" /></template>删除</n-button></template>确定删除这条记录吗？</n-popconfirm>
-          </div>
-        </div>
       </template>
     </n-card>
   </main>

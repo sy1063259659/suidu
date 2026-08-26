@@ -80,22 +80,8 @@ func (r *PostgresRepository) Get(ctx context.Context, userID, id int64) (Item, e
 }
 
 func (r *PostgresRepository) List(ctx context.Context, userID int64, filter ListFilter) ([]Item, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT `+itemColumns+`
-		FROM clipboard_items
-		WHERE user_id = $1
-		  AND ($2 = '' OR kind = $2)
-		  AND (NOT $3 OR favorite = TRUE)
-		  AND (
-			$4 = ''
-			OR strpos(lower(COALESCE(content, '')), lower($4)) > 0
-			OR strpos(lower(COALESCE(file_name, '')), lower($4)) > 0
-			OR strpos(lower(COALESCE(note, '')), lower($4)) > 0
-			OR strpos(lower(array_to_string(tags, ' ')), lower($4)) > 0
-		  )
-		ORDER BY created_at DESC, id DESC
-		LIMIT NULLIF($5, 0)
-	`, userID, filter.Kind, filter.FavoriteOnly, strings.TrimSpace(filter.Query), filter.Limit)
+	query, args := buildListItemsQuery(userID, filter)
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +99,42 @@ func (r *PostgresRepository) List(ctx context.Context, userID int64, filter List
 		return nil, err
 	}
 	return items, nil
+}
+
+func buildListItemsQuery(userID int64, filter ListFilter) (string, []any) {
+	return `
+		SELECT ` + itemColumns + `
+		FROM clipboard_items
+		WHERE user_id = $1
+		  AND ($2 = '' OR kind = $2)
+		  AND (NOT $3 OR favorite = TRUE)
+		  AND (
+			$4 = ''
+			OR strpos(lower(COALESCE(content, '')), lower($4)) > 0
+			OR strpos(lower(COALESCE(file_name, '')), lower($4)) > 0
+			OR strpos(lower(COALESCE(note, '')), lower($4)) > 0
+			OR strpos(lower(array_to_string(tags, ' ')), lower($4)) > 0
+		  )
+		  AND ($5::timestamptz IS NULL OR created_at >= $5)
+		  AND ($6::timestamptz IS NULL OR created_at < $6)
+		ORDER BY created_at DESC, id DESC
+		LIMIT NULLIF($7, 0)
+	`, []any{
+			userID,
+			filter.Kind,
+			filter.FavoriteOnly,
+			strings.TrimSpace(filter.Query),
+			timeValueOrNil(filter.CreatedFrom),
+			timeValueOrNil(filter.CreatedBefore),
+			filter.Limit,
+		}
+}
+
+func timeValueOrNil(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func itemDestinations(item *Item) []any {

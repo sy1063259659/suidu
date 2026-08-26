@@ -92,6 +92,12 @@ func (r *MemoryRepository) List(_ context.Context, userID int64, filter ListFilt
 		if filter.FavoriteOnly && !item.Favorite {
 			continue
 		}
+		if filter.CreatedFrom != nil && item.CreatedAt.Before(*filter.CreatedFrom) {
+			continue
+		}
+		if filter.CreatedBefore != nil && !item.CreatedAt.Before(*filter.CreatedBefore) {
+			continue
+		}
 		if query != "" && !strings.Contains(strings.ToLower(item.Content), query) && !strings.Contains(strings.ToLower(item.FileName), query) && !strings.Contains(strings.ToLower(item.Note), query) && !strings.Contains(strings.ToLower(strings.Join(item.Tags, " ")), query) {
 			continue
 		}

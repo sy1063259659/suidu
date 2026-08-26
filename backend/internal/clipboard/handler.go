@@ -120,8 +120,19 @@ func (h *Handler) list(c *gin.Context) {
 		}
 		favoriteOnly = raw == "true"
 	}
+	createdFrom, createdBefore, ok := parseCreatedRange(c)
+	if !ok {
+		return
+	}
 
-	items, err := h.repo.List(c.Request.Context(), user.ID, ListFilter{Limit: limit, Query: query, Kind: kind, FavoriteOnly: favoriteOnly})
+	items, err := h.repo.List(c.Request.Context(), user.ID, ListFilter{
+		Limit:         limit,
+		Query:         query,
+		Kind:          kind,
+		FavoriteOnly:  favoriteOnly,
+		CreatedFrom:   createdFrom,
+		CreatedBefore: createdBefore,
+	})
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, "failed to list clipboard items")
 		return
@@ -501,6 +512,36 @@ func parseID(c *gin.Context) (int64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+func parseCreatedRange(c *gin.Context) (*time.Time, *time.Time, bool) {
+	createdFrom, ok := parseRFC3339Query(c, "from")
+	if !ok {
+		return nil, nil, false
+	}
+	createdBefore, ok := parseRFC3339Query(c, "to")
+	if !ok {
+		return nil, nil, false
+	}
+	if createdFrom != nil && createdBefore != nil && !createdFrom.Before(*createdBefore) {
+		writeError(c, http.StatusBadRequest, "from must be earlier than to")
+		return nil, nil, false
+	}
+	return createdFrom, createdBefore, true
+}
+
+func parseRFC3339Query(c *gin.Context, key string) (*time.Time, bool) {
+	raw := c.Query(key)
+	if raw == "" {
+		return nil, true
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, key+" must be a valid RFC3339 timestamp")
+		return nil, false
+	}
+	parsed = parsed.UTC()
+	return &parsed, true
 }
 
 func isSafeImageType(mediaType string) bool {

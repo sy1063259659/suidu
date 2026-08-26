@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ExternalLink, Maximize2 } from '@lucide/vue'
+import { ArrowRight, ExternalLink } from '@lucide/vue'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
@@ -48,7 +48,10 @@ markdownRenderer.renderer.rules.link_open = secureLinkOpen
 
 const format = computed(() => detectTextFormat(props.content))
 const long = computed(() => isLongText(props.content))
-const shouldClamp = computed(() => props.preview && long.value)
+const clampableKinds = new Set(['text', 'markdown', 'code', 'json'])
+const shouldClamp = computed(() => props.preview && long.value && clampableKinds.has(format.value.kind))
+const detailActionLabel = '前往详情页'
+const detailActionAriaLabel = '前往详情页查看完整内容'
 const highlightedCode = computed(() => {
   const language = format.value.language
   if (language && hljs.getLanguage(language)) return hljs.highlight(format.value.content, { language, ignoreIllegals: true }).value
@@ -73,9 +76,49 @@ const urlHost = computed(() => {
       <span><strong>{{ urlHost || '网页链接' }}</strong><small>{{ format.content }}</small></span>
     </a>
     <div v-else class="plain-text-content">{{ format.content }}</div>
-    <div v-if="shouldClamp" class="content-clamp-fade" aria-hidden="true" />
-    <button v-if="shouldClamp" type="button" class="view-full-content" @click="emit('viewDetail')">
-      <Maximize2 :size="15" />查看完整内容
-    </button>
+    <div v-if="shouldClamp" class="preview-detail-entry">
+      <div class="content-clamp-fade" aria-hidden="true" />
+      <button
+        type="button"
+        class="view-full-content"
+        :aria-label="detailActionAriaLabel"
+        @click="emit('viewDetail')"
+      >
+        <span>{{ detailActionLabel }}</span>
+        <ArrowRight :size="15" />
+      </button>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.preview-detail-entry {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  min-height: 76px;
+  pointer-events: none;
+}
+
+.preview-detail-entry .content-clamp-fade {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 88px;
+}
+
+.preview-detail-entry .view-full-content {
+  position: relative;
+  z-index: 1;
+  margin-top: 0;
+  margin-right: 12px;
+  margin-bottom: 10px;
+  white-space: nowrap;
+  pointer-events: auto;
+  box-shadow: 0 8px 20px rgba(36, 50, 71, .16);
+}
+</style>

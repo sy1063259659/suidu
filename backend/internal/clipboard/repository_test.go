@@ -95,6 +95,70 @@ func TestMemoryRepositoryListFilters(t *testing.T) {
 	}
 }
 
+func TestMemoryRepositoryListFiltersByCreatedAt(t *testing.T) {
+	base := time.Date(2026, 8, 24, 23, 59, 0, 0, time.UTC)
+	times := []time.Time{
+		base,
+		base.Add(time.Minute),
+		base.Add(2 * time.Minute),
+		base.Add(3 * time.Minute),
+	}
+	repo := NewMemoryRepository()
+	next := 0
+	repo.now = func() time.Time {
+		current := times[next]
+		next++
+		return current
+	}
+
+	ctx := t.Context()
+	previousDay, err := repo.CreateText(ctx, 1, "previous day", "web")
+	if err != nil {
+		t.Fatalf("create previous day item: %v", err)
+	}
+	fromBoundary, err := repo.CreateText(ctx, 1, "from boundary", "web")
+	if err != nil {
+		t.Fatalf("create from boundary item: %v", err)
+	}
+	toBoundary, err := repo.CreateText(ctx, 1, "to boundary", "web")
+	if err != nil {
+		t.Fatalf("create to boundary item: %v", err)
+	}
+	if _, err := repo.CreateText(ctx, 2, "other user boundary", "web"); err != nil {
+		t.Fatalf("create other user item: %v", err)
+	}
+
+	items, err := repo.List(ctx, 1, ListFilter{
+		Limit:         10,
+		CreatedFrom:   timePointer(times[1]),
+		CreatedBefore: timePointer(times[2]),
+	})
+	if err != nil {
+		t.Fatalf("list by created range: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != fromBoundary.ID {
+		t.Fatalf("range results = %#v", items)
+	}
+
+	items, err = repo.List(ctx, 1, ListFilter{
+		Limit:         10,
+		CreatedFrom:   timePointer(times[0]),
+		CreatedBefore: timePointer(times[2]),
+	})
+	if err != nil {
+		t.Fatalf("list cross-day range: %v", err)
+	}
+	if len(items) != 2 || items[0].ID != fromBoundary.ID || items[1].ID != previousDay.ID {
+		t.Fatalf("cross-day results = %#v", items)
+	}
+	if items[0].CreatedAt.Day() == items[1].CreatedAt.Day() {
+		t.Fatalf("expected cross-day ordering, got %#v", items)
+	}
+	if items[0].ID == toBoundary.ID {
+		t.Fatalf("to boundary item should be excluded: %#v", items)
+	}
+}
+
 func TestMemoryRepositoryMetadata(t *testing.T) {
 	repo := NewMemoryRepository()
 	item, err := repo.CreateText(t.Context(), 1, "release checklist", "web")
@@ -259,4 +323,8 @@ func TestMemoryRepositoryDeletingItemInvalidatesShare(t *testing.T) {
 	if _, err := repo.GetPublicShare(t.Context(), share.Token); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted item share should be hidden, got %v", err)
 	}
+}
+
+func timePointer(value time.Time) *time.Time {
+	return &value
 }

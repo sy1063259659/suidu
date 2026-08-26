@@ -4,7 +4,7 @@ import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, Eye, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Tags, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NButtonGroup, NCard, NDynamicTags, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
-  NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
+  NDatePicker, NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
   type UploadCustomRequestOptions,
 } from 'naive-ui'
 import {
@@ -17,6 +17,15 @@ import ClipboardItemContent from './components/ClipboardItemContent.vue'
 import ClipboardDetailPage from './components/ClipboardDetailPage.vue'
 import PublicSharePage from './components/PublicSharePage.vue'
 import { captureResultsHeight, preservedResultsStyle } from './utils/historyLayout'
+import {
+  applyCustomTimeFilter,
+  applyTimePreset,
+  groupTimelineItemsByLocalDay,
+  resolveTimeRange,
+  toClipboardTimeParams,
+  type DateRangeValue,
+  type TimeFilterPreset,
+} from './utils/timeline'
 
 const publicToken = window.location.pathname.match(/^\/s\/([A-Za-z0-9_-]+)\/?$/)?.[1] ?? ''
 function detailIDFromPath() {
@@ -70,6 +79,8 @@ const activeView = ref<'clipboard' | 'shares' | 'admin'>('clipboard')
 const searchQuery = ref('')
 const itemKindFilter = ref<'all' | ClipboardItemKind>('all')
 const favoritesOnly = ref(false)
+const timePreset = ref<TimeFilterPreset>('all')
+const customTimeRange = ref<DateRangeValue>(null)
 const historyResultsElement = ref<HTMLElement | null>(null)
 const favoriteResultsMinHeight = ref(0)
 const favoritesFilterTransitioning = ref(false)
@@ -86,6 +97,12 @@ const itemKindOptions: Array<{ label: string; value: 'all' | ClipboardItemKind }
   { label: '图片', value: 'image' },
   { label: '文件', value: 'file' },
 ]
+const timePresetOptions: Array<{ label: string; value: Exclude<TimeFilterPreset, 'custom'> }> = [
+  { label: '全部时间', value: 'all' },
+  { label: '今天', value: 'today' },
+  { label: '近 7 天', value: 'last7Days' },
+  { label: '近 30 天', value: 'last30Days' },
+]
 const shareExpiryOptions = [
   { label: '1 小时', value: 3600 },
   { label: '1 天', value: 86400 },
@@ -100,12 +117,18 @@ const averageUploadProgress = computed(() => {
   const values = Object.values(uploadProgress.value)
   return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0
 })
-const hasActiveFilters = computed(() => searchQuery.value.trim() !== '' || itemKindFilter.value !== 'all' || favoritesOnly.value)
+const hasActiveFilters = computed(() => (
+  searchQuery.value.trim() !== ''
+  || itemKindFilter.value !== 'all'
+  || favoritesOnly.value
+  || timePreset.value !== 'all'
+))
 const emptyHistoryDescription = computed(() => hasActiveFilters.value ? '没有找到匹配的记录' : '还没有剪贴板记录')
 const historyResultsStyle = computed(() => preservedResultsStyle(
   favoriteResultsMinHeight.value,
   favoritesOnly.value || favoritesFilterTransitioning.value,
 ))
+const groupedHistoryItems = computed(() => groupTimelineItemsByLocalDay(items.value, new Date()))
 
 let searchTimer: ReturnType<typeof window.setTimeout> | undefined
 let listRequestSequence = 0
@@ -121,10 +144,13 @@ async function loadItems() {
   error.value = ''
   if (apiStatus.value !== 'online') apiStatus.value = 'checking'
   try {
+    const timeParams = toClipboardTimeParams(resolveTimeRange(timePreset.value, customTimeRange.value, new Date()))
     const result = await listClipboard({
       query: searchQuery.value,
       kind: itemKindFilter.value === 'all' ? undefined : itemKindFilter.value,
       favoriteOnly: favoritesOnly.value,
+      createdFrom: timeParams.createdFrom,
+      createdBefore: timeParams.createdBefore,
     })
     if (requestSequence !== listRequestSequence) return
     items.value = result
@@ -388,10 +414,37 @@ function searchTag(tag: string) {
   searchQuery.value = tag
 }
 
-function toggleFavoritesFilter() {
+function prepareFavoritesFilterTransition() {
   favoriteResultsMinHeight.value = captureResultsHeight(historyResultsElement.value?.getBoundingClientRect().height ?? 0)
   favoritesFilterTransitioning.value = true
+}
+
+function toggleFavoritesFilter() {
+  prepareFavoritesFilterTransition()
   favoritesOnly.value = !favoritesOnly.value
+}
+
+function selectTimePreset(preset: Exclude<TimeFilterPreset, 'custom'>) {
+  const next = applyTimePreset(preset)
+  timePreset.value = next.preset
+  customTimeRange.value = next.customRange
+}
+
+function handleCustomTimeRangeChange(value: DateRangeValue) {
+  const next = applyCustomTimeFilter(value)
+  timePreset.value = next.preset
+  customTimeRange.value = next.customRange
+}
+
+function clearFilters() {
+  if (!hasActiveFilters.value) return
+  if (favoritesOnly.value) prepareFavoritesFilterTransition()
+  searchQuery.value = ''
+  itemKindFilter.value = 'all'
+  favoritesOnly.value = false
+  const next = applyTimePreset('all')
+  timePreset.value = next.preset
+  customTimeRange.value = next.customRange
 }
 
 function openShareModal(item: ClipboardItem) {
@@ -443,10 +496,11 @@ async function refreshActiveView() {
   } finally { refreshLoading.value = false }
 }
 
-function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
+function formatDateTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
+function formatHistoryItemTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) }
 function handleKeydown(event: KeyboardEvent) { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
 
-watch([searchQuery, itemKindFilter, favoritesOnly], () => {
+watch([searchQuery, itemKindFilter, favoritesOnly, timePreset, customTimeRange], () => {
   if (searchTimer) window.clearTimeout(searchTimer)
   listRequestSequence++
   loading.value = false
@@ -544,7 +598,7 @@ onUnmounted(() => {
                 <div class="share-item-preview"><ClipboardItemContent :item="share.item" /></div>
                 <div class="share-link-line">{{ publicShareUrl(share.token) }}</div>
                 <div class="share-row-footer">
-                  <n-text depth="3">创建于 {{ formatDate(share.createdAt) }} · 有效期至 {{ formatDate(share.expiresAt) }}</n-text>
+                  <n-text depth="3">创建于 {{ formatDateTime(share.createdAt) }} · 有效期至 {{ formatDateTime(share.expiresAt) }}</n-text>
                   <n-space v-if="shareStatus(share) === 'active'" :size="4">
                     <n-button quaternary circle :aria-label="copiedShareId === share.id ? '已复制' : '复制分享链接'" :title="copiedShareId === share.id ? '已复制' : '复制分享链接'" @click="copyShareLink(share)"><template #icon><Copy :size="16" /></template></n-button>
                     <n-button tag="a" :href="publicShareUrl(share.token)" target="_blank" rel="noopener" quaternary circle aria-label="打开分享链接" title="打开分享链接"><template #icon><ExternalLink :size="16" /></template></n-button>
@@ -586,35 +640,61 @@ onUnmounted(() => {
                   </n-button>
                 </n-button-group>
               </div>
+              <div class="history-filter-scroll" role="group" aria-label="按时间筛选">
+                <n-button-group class="history-filter-group">
+                  <n-button v-for="option in timePresetOptions" :key="option.value" :type="timePreset === option.value ? 'primary' : 'default'" :secondary="timePreset === option.value" @click="selectTimePreset(option.value)">
+                    {{ option.label }}
+                  </n-button>
+                </n-button-group>
+              </div>
+              <n-date-picker :value="customTimeRange" class="history-date-range" type="daterange" clearable format="yyyy-MM-dd" start-placeholder="开始日期" end-placeholder="结束日期" @update:value="handleCustomTimeRangeChange" />
               <n-button class="favorites-filter" :type="favoritesOnly ? 'warning' : 'default'" :secondary="favoritesOnly" @click="toggleFavoritesFilter">
                 <template #icon><Star :size="16" :fill="favoritesOnly ? 'currentColor' : 'none'" /></template>收藏
               </n-button>
+              <n-button v-if="hasActiveFilters" quaternary class="history-reset-filters" @click="clearFilters">清除筛选
+              </n-button>
             </div>
             <div ref="historyResultsElement" class="history-results" :style="historyResultsStyle">
-            <n-empty v-if="!items.length" :description="loading ? '正在加载记录' : emptyHistoryDescription" class="empty-state" />
-            <n-list v-else class="history-list" bordered>
-              <n-list-item v-for="item in items" :key="item.id">
-                <div class="history-item">
-                  <ClipboardItemContent :item="item" preview @view-detail="openDetail(item)" />
-                  <p v-if="item.note" class="item-note">{{ item.note }}</p>
-                  <div v-if="item.tags?.length" class="item-tags" aria-label="记录标签">
-                    <n-tag v-for="tag in item.tags" :key="tag" size="small" round :bordered="false" type="info" class="item-tag" role="button" tabindex="0" @click="searchTag(tag)" @keydown.enter="searchTag(tag)">{{ tag }}</n-tag>
+              <n-empty v-if="!items.length" :description="loading ? '正在加载记录' : emptyHistoryDescription" class="empty-state" />
+              <div v-else class="history-timeline">
+                <section v-for="group in groupedHistoryItems" :key="group.dateKey" class="history-group">
+                  <div class="history-group-rail" aria-hidden="true">
+                    <span class="history-group-dot" />
+                    <span class="history-group-line" />
                   </div>
-                  <div class="history-meta">
-                    <n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space>
-                    <n-space :size="4">
-                      <n-button quaternary circle :type="item.favorite ? 'warning' : 'default'" :disabled="favoriteUpdatingId === item.id" :aria-busy="favoriteUpdatingId === item.id" :aria-label="item.favorite ? '取消收藏' : '收藏记录'" :title="item.favorite ? '取消收藏' : '收藏记录'" @click="toggleFavorite(item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template></n-button>
-                      <n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button>
-                      <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button>
-                      <n-button quaternary circle aria-label="查看详情" title="查看完整详情" @click="openDetail(item)"><template #icon><Eye :size="16" /></template></n-button>
-                      <n-button quaternary circle aria-label="整理记录" title="添加备注和标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
-                      <n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button>
-                      <n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm>
-                    </n-space>
+                  <div class="history-group-main">
+                    <header class="history-group-header">
+                      <div>
+                        <h3>{{ group.label }}</h3>
+                        <p>{{ group.count }} 条记录</p>
+                      </div>
+                    </header>
+                    <n-list class="history-group-list" bordered>
+                      <n-list-item v-for="item in group.items" :key="item.id">
+                        <div class="history-item">
+                          <ClipboardItemContent :item="item" preview @view-detail="openDetail(item)" />
+                          <p v-if="item.note" class="item-note">{{ item.note }}</p>
+                          <div v-if="item.tags?.length" class="item-tags" aria-label="记录标签">
+                            <n-tag v-for="tag in item.tags" :key="tag" size="small" round :bordered="false" type="info" class="item-tag" role="button" tabindex="0" @click="searchTag(tag)" @keydown.enter="searchTag(tag)">{{ tag }}</n-tag>
+                          </div>
+                          <div class="history-meta">
+                            <n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatHistoryItemTime(item.createdAt) }}</n-text></n-space>
+                            <n-space :size="4">
+                              <n-button quaternary circle :type="item.favorite ? 'warning' : 'default'" :disabled="favoriteUpdatingId === item.id" :aria-busy="favoriteUpdatingId === item.id" :aria-label="item.favorite ? '取消收藏' : '收藏记录'" :title="item.favorite ? '取消收藏' : '收藏记录'" @click="toggleFavorite(item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template></n-button>
+                              <n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button>
+                              <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button>
+                              <n-button quaternary circle aria-label="查看详情" title="查看完整详情" @click="openDetail(item)"><template #icon><Eye :size="16" /></template></n-button>
+                              <n-button quaternary circle aria-label="整理记录" title="添加备注和标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
+                              <n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button>
+                              <n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm>
+                            </n-space>
+                          </div>
+                        </div>
+                      </n-list-item>
+                    </n-list>
                   </div>
-                </div>
-              </n-list-item>
-            </n-list>
+                </section>
+              </div>
             </div>
           </section>
         </main>

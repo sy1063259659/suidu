@@ -21,6 +21,8 @@ export interface ListClipboardOptions {
   query?: string
   kind?: ClipboardItemKind
   favoriteOnly?: boolean
+  createdFrom?: string
+  createdBefore?: string
 }
 
 const api = axios.create({ baseURL: '/api' })
@@ -32,6 +34,8 @@ export async function listClipboard(options: ListClipboardOptions = {}): Promise
       q: options.query?.trim() || undefined,
       kind: options.kind,
       favorite: options.favoriteOnly ? true : undefined,
+      from: options.createdFrom,
+      to: options.createdBefore,
     },
   })
   return data.items
