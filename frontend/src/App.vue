@@ -20,6 +20,7 @@ import { captureResultsHeight, preservedResultsStyle } from './utils/historyLayo
 import {
   applyCustomTimeFilter,
   applyTimePreset,
+  groupTimelineItemsByLocalDay,
   resolveTimeRange,
   toClipboardTimeParams,
   type DateRangeValue,
@@ -127,6 +128,7 @@ const historyResultsStyle = computed(() => preservedResultsStyle(
   favoriteResultsMinHeight.value,
   favoritesOnly.value || favoritesFilterTransitioning.value,
 ))
+const groupedHistoryItems = computed(() => groupTimelineItemsByLocalDay(items.value, new Date()))
 
 let searchTimer: ReturnType<typeof window.setTimeout> | undefined
 let listRequestSequence = 0
@@ -494,7 +496,8 @@ async function refreshActiveView() {
   } finally { refreshLoading.value = false }
 }
 
-function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
+function formatDateTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
+function formatHistoryItemTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) }
 function handleKeydown(event: KeyboardEvent) { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
 
 watch([searchQuery, itemKindFilter, favoritesOnly, timePreset, customTimeRange], () => {
@@ -595,7 +598,7 @@ onUnmounted(() => {
                 <div class="share-item-preview"><ClipboardItemContent :item="share.item" /></div>
                 <div class="share-link-line">{{ publicShareUrl(share.token) }}</div>
                 <div class="share-row-footer">
-                  <n-text depth="3">创建于 {{ formatDate(share.createdAt) }} · 有效期至 {{ formatDate(share.expiresAt) }}</n-text>
+                  <n-text depth="3">创建于 {{ formatDateTime(share.createdAt) }} · 有效期至 {{ formatDateTime(share.expiresAt) }}</n-text>
                   <n-space v-if="shareStatus(share) === 'active'" :size="4">
                     <n-button quaternary circle :aria-label="copiedShareId === share.id ? '已复制' : '复制分享链接'" :title="copiedShareId === share.id ? '已复制' : '复制分享链接'" @click="copyShareLink(share)"><template #icon><Copy :size="16" /></template></n-button>
                     <n-button tag="a" :href="publicShareUrl(share.token)" target="_blank" rel="noopener" quaternary circle aria-label="打开分享链接" title="打开分享链接"><template #icon><ExternalLink :size="16" /></template></n-button>
@@ -652,30 +655,46 @@ onUnmounted(() => {
               </n-button>
             </div>
             <div ref="historyResultsElement" class="history-results" :style="historyResultsStyle">
-            <n-empty v-if="!items.length" :description="loading ? '正在加载记录' : emptyHistoryDescription" class="empty-state" />
-            <n-list v-else class="history-list" bordered>
-              <n-list-item v-for="item in items" :key="item.id">
-                <div class="history-item">
-                  <ClipboardItemContent :item="item" preview @view-detail="openDetail(item)" />
-                  <p v-if="item.note" class="item-note">{{ item.note }}</p>
-                  <div v-if="item.tags?.length" class="item-tags" aria-label="记录标签">
-                    <n-tag v-for="tag in item.tags" :key="tag" size="small" round :bordered="false" type="info" class="item-tag" role="button" tabindex="0" @click="searchTag(tag)" @keydown.enter="searchTag(tag)">{{ tag }}</n-tag>
+              <n-empty v-if="!items.length" :description="loading ? '正在加载记录' : emptyHistoryDescription" class="empty-state" />
+              <div v-else class="history-timeline">
+                <section v-for="group in groupedHistoryItems" :key="group.dateKey" class="history-group">
+                  <div class="history-group-rail" aria-hidden="true">
+                    <span class="history-group-dot" />
+                    <span class="history-group-line" />
                   </div>
-                  <div class="history-meta">
-                    <n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatDate(item.createdAt) }}</n-text></n-space>
-                    <n-space :size="4">
-                      <n-button quaternary circle :type="item.favorite ? 'warning' : 'default'" :disabled="favoriteUpdatingId === item.id" :aria-busy="favoriteUpdatingId === item.id" :aria-label="item.favorite ? '取消收藏' : '收藏记录'" :title="item.favorite ? '取消收藏' : '收藏记录'" @click="toggleFavorite(item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template></n-button>
-                      <n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button>
-                      <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button>
-                      <n-button quaternary circle aria-label="查看详情" title="查看完整详情" @click="openDetail(item)"><template #icon><Eye :size="16" /></template></n-button>
-                      <n-button quaternary circle aria-label="整理记录" title="添加备注和标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
-                      <n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button>
-                      <n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm>
-                    </n-space>
+                  <div class="history-group-main">
+                    <header class="history-group-header">
+                      <div>
+                        <h3>{{ group.label }}</h3>
+                        <p>{{ group.count }} 条记录</p>
+                      </div>
+                    </header>
+                    <n-list class="history-group-list" bordered>
+                      <n-list-item v-for="item in group.items" :key="item.id">
+                        <div class="history-item">
+                          <ClipboardItemContent :item="item" preview @view-detail="openDetail(item)" />
+                          <p v-if="item.note" class="item-note">{{ item.note }}</p>
+                          <div v-if="item.tags?.length" class="item-tags" aria-label="记录标签">
+                            <n-tag v-for="tag in item.tags" :key="tag" size="small" round :bordered="false" type="info" class="item-tag" role="button" tabindex="0" @click="searchTag(tag)" @keydown.enter="searchTag(tag)">{{ tag }}</n-tag>
+                          </div>
+                          <div class="history-meta">
+                            <n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatHistoryItemTime(item.createdAt) }}</n-text></n-space>
+                            <n-space :size="4">
+                              <n-button quaternary circle :type="item.favorite ? 'warning' : 'default'" :disabled="favoriteUpdatingId === item.id" :aria-busy="favoriteUpdatingId === item.id" :aria-label="item.favorite ? '取消收藏' : '收藏记录'" :title="item.favorite ? '取消收藏' : '收藏记录'" @click="toggleFavorite(item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template></n-button>
+                              <n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button>
+                              <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button>
+                              <n-button quaternary circle aria-label="查看详情" title="查看完整详情" @click="openDetail(item)"><template #icon><Eye :size="16" /></template></n-button>
+                              <n-button quaternary circle aria-label="整理记录" title="添加备注和标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
+                              <n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button>
+                              <n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm>
+                            </n-space>
+                          </div>
+                        </div>
+                      </n-list-item>
+                    </n-list>
                   </div>
-                </div>
-              </n-list-item>
-            </n-list>
+                </section>
+              </div>
             </div>
           </section>
         </main>

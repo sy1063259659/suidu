@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   applyCustomTimeFilter,
   applyTimePreset,
+  formatTimelineGroupLabel,
+  groupTimelineItemsByLocalDay,
   resolveTimeRange,
   toClipboardTimeParams,
 } from './timeline'
@@ -75,5 +77,36 @@ describe('timeline time filters', () => {
       preset: 'all',
       customRange: null,
     })
+  })
+})
+
+describe('timeline day grouping', () => {
+  it('groups items by local natural day while preserving descending item order inside each group', () => {
+    const now = new Date(2026, 7, 26, 10, 0)
+    const items = [
+      { id: 4, createdAt: new Date(2026, 7, 26, 21, 15).toISOString() },
+      { id: 3, createdAt: new Date(2026, 7, 26, 8, 5).toISOString() },
+      { id: 2, createdAt: new Date(2026, 7, 25, 23, 59).toISOString() },
+      { id: 1, createdAt: new Date(2026, 7, 24, 7, 45).toISOString() },
+    ]
+
+    const groups = groupTimelineItemsByLocalDay(items, now)
+
+    expect(groups).toHaveLength(3)
+    expect(groups.map((group) => ({
+      label: group.label,
+      count: group.count,
+      itemIds: group.items.map((item) => item.id),
+    }))).toEqual([
+      { label: '今天', count: 2, itemIds: [4, 3] },
+      { label: '昨天', count: 1, itemIds: [2] },
+      { label: '2026年8月24日 周一', count: 1, itemIds: [1] },
+    ])
+  })
+
+  it('formats non-relative group labels as complete local dates with weekday', () => {
+    const now = new Date(2026, 7, 26, 10, 0)
+
+    expect(formatTimelineGroupLabel(new Date(2026, 7, 24, 18, 0), now)).toBe('2026年8月24日 周一')
   })
 })
