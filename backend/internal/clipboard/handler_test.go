@@ -65,6 +65,31 @@ func TestHandlerCreateListDelete(t *testing.T) {
 	}
 }
 
+func TestHandlerGetsOwnedItem(t *testing.T) {
+	repo := NewMemoryRepository()
+	owned, err := repo.CreateText(t.Context(), 1, "owned detail", "web")
+	if err != nil {
+		t.Fatalf("create owned item: %v", err)
+	}
+	foreign, err := repo.CreateText(t.Context(), 2, "foreign detail", "web")
+	if err != nil {
+		t.Fatalf("create foreign item: %v", err)
+	}
+	router := newTestRouter(repo)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/clipboard/"+strconv.FormatInt(owned.ID, 10), nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "owned detail") {
+		t.Fatalf("owned item response = %d, %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/clipboard/"+strconv.FormatInt(foreign.ID, 10), nil))
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), "foreign detail") {
+		t.Fatalf("foreign item response = %d, %s", response.Code, response.Body.String())
+	}
+}
+
 func TestHandlerListSearchAndKindFilter(t *testing.T) {
 	repo := NewMemoryRepository()
 	if _, err := repo.CreateText(t.Context(), 1, "Alpha release note", "web"); err != nil {

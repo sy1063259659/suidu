@@ -41,6 +41,7 @@ func NewHandler(repo Repository, files filestore.Store, maxFileBytes int64) *Han
 
 func (h *Handler) RegisterRoutes(router gin.IRouter) {
 	router.GET("/clipboard", h.list)
+	router.GET("/clipboard/:id", h.get)
 	router.POST("/clipboard", h.create)
 	router.POST("/clipboard/files", h.upload)
 	router.GET("/clipboard/:id/content", h.content)
@@ -49,6 +50,28 @@ func (h *Handler) RegisterRoutes(router gin.IRouter) {
 	router.POST("/clipboard/:id/shares", h.createShare)
 	router.GET("/shares", h.listShares)
 	router.POST("/shares/:id/revoke", h.revokeShare)
+}
+
+func (h *Handler) get(c *gin.Context) {
+	user, ok := auth.CurrentUser(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	item, err := h.repo.Get(c.Request.Context(), user.ID, id)
+	if errors.Is(err, ErrNotFound) {
+		writeError(c, http.StatusNotFound, "clipboard item not found")
+		return
+	}
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "failed to get clipboard item")
+		return
+	}
+	c.JSON(http.StatusOK, item)
 }
 
 func (h *Handler) RegisterPublicRoutes(router gin.IRouter) {

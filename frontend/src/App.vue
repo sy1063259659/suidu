@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import axios from 'axios'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Tags, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
+import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, Eye, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Tags, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NButtonGroup, NCard, NDynamicTags, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
   NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
@@ -11,15 +11,25 @@ import {
   changePassword, createUser, getCurrentUser, listUsers, login, logout, resetUserPassword,
   setUserDisabled, type User,
 } from './api/auth'
-import { clipboardContentUrl, createClipboard, deleteClipboard, listClipboard, updateClipboardMetadata, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
+import { clipboardContentUrl, createClipboard, deleteClipboard, getClipboard, listClipboard, updateClipboardMetadata, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
 import { createClipboardShare, listClipboardShares, publicShareUrl, revokeClipboardShare, type ClipboardShare } from './api/shares'
 import ClipboardItemContent from './components/ClipboardItemContent.vue'
+import ClipboardDetailPage from './components/ClipboardDetailPage.vue'
 import PublicSharePage from './components/PublicSharePage.vue'
 
 const publicToken = window.location.pathname.match(/^\/s\/([A-Za-z0-9_-]+)\/?$/)?.[1] ?? ''
+function detailIDFromPath() {
+  const raw = window.location.pathname.match(/^\/items\/(\d+)\/?$/)?.[1]
+  const parsed = raw ? Number(raw) : 0
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0
+}
 
 const items = ref<ClipboardItem[]>([])
 const currentUser = ref<User | null>(null)
+const detailItemId = ref(detailIDFromPath())
+const detailItem = shallowRef<ClipboardItem | null>(null)
+const detailLoading = ref(false)
+const detailUnavailable = ref(false)
 const authLoading = ref(true)
 const loginLoading = ref(false)
 const loginUsername = ref('')
@@ -42,6 +52,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const error = ref('')
 const apiStatus = ref<'checking' | 'online' | 'offline'>('checking')
+const refreshLoading = ref(false)
 const copiedId = ref<number | null>(null)
 const copiedShareId = ref<number | null>(null)
 const uploadError = ref('')
@@ -58,6 +69,8 @@ const activeView = ref<'clipboard' | 'shares' | 'admin'>('clipboard')
 const searchQuery = ref('')
 const itemKindFilter = ref<'all' | ClipboardItemKind>('all')
 const favoritesOnly = ref(false)
+const historyResultsElement = ref<HTMLElement | null>(null)
+const favoriteResultsMinHeight = ref(0)
 const favoriteUpdatingId = ref<number | null>(null)
 const tagModalOpen = ref(false)
 const tagItem = shallowRef<ClipboardItem | null>(null)
@@ -79,6 +92,7 @@ const shareExpiryOptions = [
 ]
 const canSubmit = computed(() => draft.value.trim().length > 0 && !submitting.value)
 const isAdmin = computed(() => currentUser.value?.role === 'admin')
+const isDetailPage = computed(() => detailItemId.value > 0)
 const uploadingCount = computed(() => Object.keys(uploadProgress.value).length)
 const averageUploadProgress = computed(() => {
   const values = Object.values(uploadProgress.value)
@@ -99,7 +113,7 @@ async function loadItems() {
   const requestSequence = ++listRequestSequence
   loading.value = true
   error.value = ''
-  apiStatus.value = 'checking'
+  if (apiStatus.value !== 'online') apiStatus.value = 'checking'
   try {
     const result = await listClipboard({
       query: searchQuery.value,
@@ -115,6 +129,24 @@ async function loadItems() {
     error.value = '无法连接服务，请稍后重试。'
   } finally {
     if (requestSequence === listRequestSequence) loading.value = false
+  }
+}
+
+async function loadDetailItem() {
+  if (!detailItemId.value) return
+  const requestedID = detailItemId.value
+  detailLoading.value = true
+  detailUnavailable.value = false
+  try {
+    const item = await getClipboard(requestedID)
+    if (detailItemId.value === requestedID) detailItem.value = item
+  } catch (errorValue) {
+    if (detailItemId.value !== requestedID) return
+    detailItem.value = null
+    detailUnavailable.value = axios.isAxiosError(errorValue) && errorValue.response?.status === 404
+    if (!detailUnavailable.value) error.value = '无法加载记录详情，请稍后重试。'
+  } finally {
+    if (detailItemId.value === requestedID) detailLoading.value = false
   }
 }
 
@@ -134,7 +166,7 @@ async function loadSession() {
   authLoading.value = true
   try {
     currentUser.value = await getCurrentUser()
-    await Promise.all([loadItems(), loadShares()])
+    await Promise.all([loadItems(), loadShares(), loadDetailItem()])
     await loadAdminUsers()
   } catch (errorValue) {
     if (!axios.isAxiosError(errorValue) || errorValue.response?.status !== 401) loginError.value = '无法连接认证服务，请稍后重试。'
@@ -146,11 +178,11 @@ async function submitLogin() {
   if (!loginUsername.value.trim() || !loginPassword.value || loginLoading.value) return
   loginLoading.value = true
   loginError.value = ''
-  try { currentUser.value = await login(loginUsername.value, loginPassword.value); loginPassword.value = ''; await Promise.all([loadItems(), loadShares()]); await loadAdminUsers() } catch (errorValue) { loginError.value = errorMessage(errorValue, '登录失败，请稍后重试。') } finally { loginLoading.value = false }
+  try { currentUser.value = await login(loginUsername.value, loginPassword.value); loginPassword.value = ''; await Promise.all([loadItems(), loadShares(), loadDetailItem()]); await loadAdminUsers() } catch (errorValue) { loginError.value = errorMessage(errorValue, '登录失败，请稍后重试。') } finally { loginLoading.value = false }
 }
 
 async function submitLogout() {
-  try { await logout() } finally { listRequestSequence++; currentUser.value = null; items.value = []; shares.value = []; adminUsers.value = []; passwordFormOpen.value = false; tagModalOpen.value = false; activeView.value = 'clipboard' }
+  try { await logout() } finally { listRequestSequence++; currentUser.value = null; items.value = []; detailItem.value = null; shares.value = []; adminUsers.value = []; passwordFormOpen.value = false; tagModalOpen.value = false; activeView.value = 'clipboard' }
 }
 
 async function submitPasswordChange() {
@@ -241,7 +273,7 @@ function uploadFile(options: UploadCustomRequestOptions) {
 }
 
 function handlePaste(event: ClipboardEvent) {
-  if (!currentUser.value || activeView.value !== 'clipboard' || shareModalOpen.value || tagModalOpen.value || passwordFormOpen.value) return
+  if (!currentUser.value || activeView.value !== 'clipboard' || isDetailPage.value || shareModalOpen.value || tagModalOpen.value || passwordFormOpen.value) return
   const clipboard = event.clipboardData
   if (!clipboard) return
   const files = Array.from(clipboard.files)
@@ -266,13 +298,47 @@ async function copyItem(item: ClipboardItem) {
 }
 
 async function removeItem(item: ClipboardItem) {
-  try { await deleteClipboard(item.id); items.value = items.value.filter((current) => current.id !== item.id); shares.value = shares.value.filter((share) => share.item.id !== item.id) } catch (errorValue) { error.value = errorMessage(errorValue, '删除失败，请稍后重试。') }
+  try {
+    await deleteClipboard(item.id)
+    items.value = items.value.filter((current) => current.id !== item.id)
+    shares.value = shares.value.filter((share) => share.item.id !== item.id)
+    if (detailItemId.value === item.id) closeDetail()
+  } catch (errorValue) { error.value = errorMessage(errorValue, '删除失败，请稍后重试。') }
 }
 
 function replaceItem(updated: ClipboardItem) {
   if (favoritesOnly.value && !updated.favorite) items.value = items.value.filter((item) => item.id !== updated.id)
   else items.value = items.value.map((item) => item.id === updated.id ? updated : item)
   shares.value = shares.value.map((share) => share.item.id === updated.id ? { ...share, item: updated } : share)
+  if (detailItemId.value === updated.id) detailItem.value = updated
+}
+
+function openDetail(item: ClipboardItem) {
+  detailItemId.value = item.id
+  detailItem.value = item
+  detailUnavailable.value = false
+  window.history.pushState({ suiduDetail: true }, '', `/items/${item.id}`)
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function closeDetail() {
+  if (window.history.state?.suiduDetail) {
+    window.history.back()
+    return
+  }
+  detailItemId.value = 0
+  detailItem.value = null
+  detailUnavailable.value = false
+  window.history.pushState({}, '', '/')
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function handlePopState() {
+  const nextID = detailIDFromPath()
+  detailItemId.value = nextID
+  detailItem.value = nextID ? items.value.find((item) => item.id === nextID) ?? null : null
+  detailUnavailable.value = false
+  if (nextID && currentUser.value && !detailItem.value) void loadDetailItem()
 }
 
 async function toggleFavorite(item: ClipboardItem) {
@@ -313,6 +379,13 @@ function searchTag(tag: string) {
   searchQuery.value = tag
 }
 
+function toggleFavoritesFilter() {
+  if (!favoritesOnly.value) {
+    favoriteResultsMinHeight.value = Math.ceil(historyResultsElement.value?.getBoundingClientRect().height ?? 0)
+  }
+  favoritesOnly.value = !favoritesOnly.value
+}
+
 function openShareModal(item: ClipboardItem) {
   shareItem.value = item
   shareTTL.value = 86400
@@ -351,10 +424,15 @@ function shareStatus(share: ClipboardShare): 'active' | 'expired' | 'revoked' {
   return new Date(share.expiresAt).getTime() <= Date.now() ? 'expired' : 'active'
 }
 
-function refreshActiveView() {
-  if (activeView.value === 'shares') void loadShares()
-  else if (activeView.value === 'admin') void loadAdminUsers()
-  else void loadItems()
+async function refreshActiveView() {
+  if (refreshLoading.value) return
+  refreshLoading.value = true
+  try {
+    if (isDetailPage.value) await loadDetailItem()
+    else if (activeView.value === 'shares') await loadShares()
+    else if (activeView.value === 'admin') await loadAdminUsers()
+    else await loadItems()
+  } finally { refreshLoading.value = false }
 }
 
 function formatDate(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
@@ -373,10 +451,12 @@ onMounted(() => {
   if (!publicToken) {
     void loadSession()
     document.addEventListener('paste', handlePaste)
+    window.addEventListener('popstate', handlePopState)
   }
 })
 onUnmounted(() => {
   document.removeEventListener('paste', handlePaste)
+  window.removeEventListener('popstate', handlePopState)
   if (searchTimer) window.clearTimeout(searchTimer)
 })
 </script>
@@ -405,9 +485,9 @@ onUnmounted(() => {
     <n-layout-header bordered class="app-header">
       <div><div class="brand">随渡 <span>SUIDU</span></div><div class="subtitle">把文字放在随手可取的地方</div></div>
       <n-space align="center" :size="12">
-        <n-button :type="activeView === 'shares' ? 'primary' : 'default'" @click="activeView = activeView === 'shares' ? 'clipboard' : 'shares'"><template #icon><Share2 v-if="activeView !== 'shares'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'shares' ? '返回剪贴板' : '分享管理' }}
+        <n-button v-if="!isDetailPage" :type="activeView === 'shares' ? 'primary' : 'default'" @click="activeView = activeView === 'shares' ? 'clipboard' : 'shares'"><template #icon><Share2 v-if="activeView !== 'shares'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'shares' ? '返回剪贴板' : '分享管理' }}
         </n-button>
-        <n-button v-if="isAdmin" :type="activeView === 'admin' ? 'primary' : 'default'" @click="activeView = activeView === 'admin' ? 'clipboard' : 'admin'"><template #icon><ShieldCheck v-if="activeView !== 'admin'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'admin' ? '返回剪贴板' : '管理中心' }}
+        <n-button v-if="isAdmin && !isDetailPage" :type="activeView === 'admin' ? 'primary' : 'default'" @click="activeView = activeView === 'admin' ? 'clipboard' : 'admin'"><template #icon><ShieldCheck v-if="activeView !== 'admin'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'admin' ? '返回剪贴板' : '管理中心' }}
         </n-button>
         <n-tag :type="isAdmin ? 'warning' : 'info'">{{ currentUser.username }} · {{ isAdmin ? '管理员' : '普通用户' }}
         </n-tag>
@@ -417,7 +497,7 @@ onUnmounted(() => {
         </n-button>
         <n-tag :type="apiStatus === 'online' ? 'success' : apiStatus === 'offline' ? 'error' : 'warning'">API {{ apiStatus === 'online' ? '在线' : apiStatus === 'offline' ? '离线' : '检查中' }}
         </n-tag>
-        <n-button quaternary circle aria-label="刷新内容" title="刷新内容" :loading="activeView === 'shares' ? sharesLoading : activeView === 'admin' ? adminLoading : loading" @click="refreshActiveView"><template #icon><RefreshCw :size="17" /></template>
+        <n-button quaternary circle aria-label="刷新内容" title="刷新内容" :loading="refreshLoading" @click="refreshActiveView"><template #icon><RefreshCw :size="17" /></template>
         </n-button>
       </n-space>
     </n-layout-header>
@@ -429,7 +509,8 @@ onUnmounted(() => {
           </n-alert><n-alert v-if="passwordSuccess" type="success" class="form-alert">{{ passwordSuccess }}
           </n-alert>
         </n-card>
-        <main v-if="activeView === 'admin'" class="admin-page">
+        <ClipboardDetailPage v-if="isDetailPage" :item="detailItem" :loading="detailLoading" :unavailable="detailUnavailable" :favorite-updating="favoriteUpdatingId === detailItemId" :copied="copiedId === detailItemId" @back="closeDetail" @copy="copyItem" @favorite="toggleFavorite" @organize="openTagModal" @share="openShareModal" @delete="removeItem" />
+        <main v-else-if="activeView === 'admin'" class="admin-page">
           <section class="admin-hero"><div><p class="eyebrow">ADMINISTRATION</p><h1>管理中心</h1><p class="intro-copy">管理随渡账号、登录权限和日常使用身份。</p></div><n-tag type="warning" :bordered="false"><template #icon><ShieldCheck :size="14" /></template>管理员</n-tag></section>
           <section class="admin-metrics"><div class="metric-item"><Users :size="18" /><div><span>用户总数</span><strong>{{ adminUsers.length }}</strong></div></div><div class="metric-item"><UserPlus :size="18" /><div><span>普通用户</span><strong>{{ adminUsers.filter((user) => user.role === 'user').length }}</strong></div></div><div class="metric-item"><KeyRound :size="18" /><div><span>当前账号</span><strong>{{ currentUser.username }}</strong></div></div></section>
           <section class="admin-grid">
@@ -480,10 +561,11 @@ onUnmounted(() => {
           </n-alert>
           <n-alert v-if="error" type="error" closable class="error-alert" @close="error = ''">{{ error }}
           </n-alert>
-          <section class="history-section">
+          <section class="history-section" :class="{ 'is-loading': loading }" :aria-busy="loading">
+            <div class="history-progress-rail" aria-hidden="true"><span /></div>
             <div class="section-heading">
               <div><p class="eyebrow">HISTORY</p><h2>剪贴板记录</h2></div>
-              <div class="history-heading-status"><span class="history-loading-slot"><n-spin v-if="loading" size="small" aria-label="正在加载记录" /></span><n-text depth="3">{{ hasActiveFilters ? `找到 ${items.length} 条` : '按时间倒序' }}</n-text></div>
+              <div class="history-heading-status"><n-text depth="3">{{ hasActiveFilters ? `找到 ${items.length} 条` : '按时间倒序' }}</n-text></div>
             </div>
             <div class="history-toolbar">
               <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" placeholder="搜索文本、文件名、备注或标签" aria-label="搜索剪贴板记录">
@@ -496,15 +578,16 @@ onUnmounted(() => {
                   </n-button>
                 </n-button-group>
               </div>
-              <n-button class="favorites-filter" :type="favoritesOnly ? 'warning' : 'default'" :secondary="favoritesOnly" @click="favoritesOnly = !favoritesOnly">
+              <n-button class="favorites-filter" :type="favoritesOnly ? 'warning' : 'default'" :secondary="favoritesOnly" @click="toggleFavoritesFilter">
                 <template #icon><Star :size="16" :fill="favoritesOnly ? 'currentColor' : 'none'" /></template>收藏
               </n-button>
             </div>
+            <div ref="historyResultsElement" class="history-results" :style="favoritesOnly && favoriteResultsMinHeight ? { minHeight: `${favoriteResultsMinHeight}px` } : undefined">
             <n-empty v-if="!items.length" :description="loading ? '正在加载记录' : emptyHistoryDescription" class="empty-state" />
             <n-list v-else class="history-list" bordered>
               <n-list-item v-for="item in items" :key="item.id">
                 <div class="history-item">
-                  <ClipboardItemContent :item="item" />
+                  <ClipboardItemContent :item="item" preview @view-detail="openDetail(item)" />
                   <p v-if="item.note" class="item-note">{{ item.note }}</p>
                   <div v-if="item.tags?.length" class="item-tags" aria-label="记录标签">
                     <n-tag v-for="tag in item.tags" :key="tag" size="small" round :bordered="false" type="info" class="item-tag" role="button" tabindex="0" @click="searchTag(tag)" @keydown.enter="searchTag(tag)">{{ tag }}</n-tag>
@@ -515,6 +598,7 @@ onUnmounted(() => {
                       <n-button quaternary circle :type="item.favorite ? 'warning' : 'default'" :disabled="favoriteUpdatingId === item.id" :aria-busy="favoriteUpdatingId === item.id" :aria-label="item.favorite ? '取消收藏' : '收藏记录'" :title="item.favorite ? '取消收藏' : '收藏记录'" @click="toggleFavorite(item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template></n-button>
                       <n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button>
                       <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button>
+                      <n-button quaternary circle aria-label="查看详情" title="查看完整详情" @click="openDetail(item)"><template #icon><Eye :size="16" /></template></n-button>
                       <n-button quaternary circle aria-label="整理记录" title="添加备注和标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
                       <n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button>
                       <n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm>
@@ -523,6 +607,7 @@ onUnmounted(() => {
                 </div>
               </n-list-item>
             </n-list>
+            </div>
           </section>
         </main>
     </n-layout-content>

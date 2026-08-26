@@ -5,23 +5,28 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "vitest",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
     "@lucide/vue": "^1.33.0",
     "axios": "^1.11.0",
+    "highlight.js": "^11.12.0",
+    "markdown-it": "^15.0.0",
     "naive-ui": "^2.41.1",
     "pinia": "^3.0.3",
     "vue": "^3.5.18",
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^24.3.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "typescript": "~5.8.3",
     "vite": "^7.1.3",
     "vite-plugin-pwa": "^1.0.2",
+    "vitest": "^4.1.11",
     "vue-tsc": "^2.2.12"
   }
 }

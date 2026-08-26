@@ -59,6 +59,10 @@ Clipboard records are isolated by user. Existing records without an owner are as
 
 Clipboard history can be searched case-insensitively by text content or file name and filtered to text, images, or other files. Search and type filtering run in the backend across the user's full history before the newest-first result limit is applied, so older matching records remain discoverable without loading every item into the browser.
 
+Long text is collapsed in clipboard history so one record cannot dominate the page. Its protected `/items/:id` detail page loads the record directly with owner isolation, supports browser navigation, and shows the complete content without truncation.
+
+Text presentation recognizes fenced code, JSON, Markdown, standalone web links, and common Go, TypeScript/JavaScript, Python, SQL, YAML, Java, Shell, HTML, and CSS snippets. Code receives language-aware highlighting, Markdown is rendered with raw HTML disabled, and ordinary text keeps its original whitespace.
+
 ### Notes, tags, and favorites
 
 Each clipboard record can have a private note of up to 500 characters and up to 10 private tags, with at most 24 characters per tag. Notes are intended for one or two sentences describing what the record is for. Notes and tags are displayed on the record and included in clipboard search; tags are trimmed and deduplicated case-insensitively. Important records can be starred and retrieved with the favorites-only filter.
