@@ -79,6 +79,42 @@ func (r *MemoryRepository) FindDuplicate(_ context.Context, userID int64, kind K
 	return Item{}, ErrNotFound
 }
 
+func (r *MemoryRepository) Import(_ context.Context, userID int64, input ImportItem) (Item, error) {
+	metadata, err := normalizeMetadata(input.Metadata)
+	if err != nil {
+		return Item{}, err
+	}
+	createdAt := input.CreatedAt.UTC()
+	if createdAt.IsZero() {
+		createdAt = r.now().UTC()
+	}
+	item := Item{UserID: userID, Kind: input.Kind, Note: metadata.Note, Tags: metadata.Tags, Favorite: metadata.Favorite, CreatedAt: createdAt}
+	if input.Kind == KindText {
+		if err := validateContent(input.Content); err != nil {
+			return Item{}, err
+		}
+		item.Content = input.Content
+		item.ContentHash = textContentHash(input.Content)
+		item.Source = normalizeSource(input.Source)
+	} else {
+		if err := validateAttachment(input.Attachment); err != nil || input.Attachment.Kind != input.Kind {
+			return Item{}, ErrInvalidFile
+		}
+		item.FileName = normalizeFileName(input.Attachment.FileName)
+		item.MediaType = input.Attachment.MediaType
+		item.SizeBytes = input.Attachment.SizeBytes
+		item.StorageKey = input.Attachment.StorageKey
+		item.ContentHash = input.Attachment.ContentHash
+		item.Source = normalizeSource(input.Attachment.Source)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item.ID = r.nextID
+	r.nextID++
+	r.items[item.ID] = item
+	return item, nil
+}
+
 func (r *MemoryRepository) Get(_ context.Context, userID, id int64) (Item, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

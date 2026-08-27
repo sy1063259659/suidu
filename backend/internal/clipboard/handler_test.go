@@ -1,6 +1,7 @@
 package clipboard
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -74,6 +75,10 @@ func (r *listCaptureRepo) FindDuplicate(context.Context, int64, Kind, string) (I
 	panic("unexpected FindDuplicate call")
 }
 
+func (r *listCaptureRepo) Import(context.Context, int64, ImportItem) (Item, error) {
+	panic("unexpected Import call")
+}
+
 func newTestRouter(repo Repository) *gin.Engine {
 	return newTestRouterWithStore(repo, filestore.NewMemoryStore(), 1, MaxFileBytes)
 }
@@ -115,6 +120,55 @@ func TestHandlerCreateListDelete(t *testing.T) {
 	router.ServeHTTP(deleteResponse, httptest.NewRequest(http.MethodDelete, "/api/clipboard/"+strconv.FormatInt(created.ID, 10), nil))
 	if deleteResponse.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, body = %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+}
+
+func TestHandlerExportAndImportBackup(t *testing.T) {
+	repo := NewMemoryRepository()
+	item, err := repo.CreateText(t.Context(), 1, "backup me", "web")
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+	if _, err := repo.UpdateMetadata(t.Context(), 1, item.ID, ItemMetadata{Note: "迁移测试", Tags: []string{"test"}, Favorite: true}); err != nil {
+		t.Fatalf("update metadata: %v", err)
+	}
+	router := newTestRouter(repo)
+	exportResponse := httptest.NewRecorder()
+	router.ServeHTTP(exportResponse, httptest.NewRequest(http.MethodGet, "/api/backup/export", nil))
+	if exportResponse.Code != http.StatusOK || exportResponse.Header().Get("Content-Type") != "application/zip" {
+		t.Fatalf("export response = %d, content type = %q", exportResponse.Code, exportResponse.Header().Get("Content-Type"))
+	}
+	archive, err := zip.NewReader(bytes.NewReader(exportResponse.Body.Bytes()), int64(exportResponse.Body.Len()))
+	if err != nil {
+		t.Fatalf("open export: %v", err)
+	}
+	manifestEntry := archive.File[0]
+	if manifestEntry.Name != "manifest.json" && len(archive.File) > 1 {
+		manifestEntry = archive.File[len(archive.File)-1]
+	}
+	manifestReader, err := manifestEntry.Open()
+	if err != nil {
+		t.Fatalf("open manifest: %v", err)
+	}
+	var manifest backupManifest
+	if err := json.NewDecoder(manifestReader).Decode(&manifest); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	_ = manifestReader.Close()
+	if manifest.Version != backupVersion || len(manifest.Items) != 1 || !manifest.Items[0].Favorite || manifest.Items[0].Note != "迁移测试" {
+		t.Fatalf("unexpected manifest: %#v", manifest)
+	}
+
+	importRepo := NewMemoryRepository()
+	importRouter := newTestRouter(importRepo)
+	importResponse := httptest.NewRecorder()
+	importRouter.ServeHTTP(importResponse, multipartBackupRequest(t, exportResponse.Body.Bytes()))
+	if importResponse.Code != http.StatusOK || !strings.Contains(importResponse.Body.String(), `"imported":1`) {
+		t.Fatalf("import response = %d, body = %s", importResponse.Code, importResponse.Body.String())
+	}
+	items, err := importRepo.List(t.Context(), 1, ListFilter{})
+	if err != nil || len(items) != 1 || items[0].Note != "迁移测试" || !items[0].Favorite {
+		t.Fatalf("imported items = %#v, err = %v", items, err)
 	}
 }
 
@@ -363,6 +417,28 @@ func multipartRequest(t *testing.T, target, fileName, mediaType string, content 
 		t.Fatalf("close multipart writer: %v", err)
 	}
 	request := httptest.NewRequest(http.MethodPost, target, &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	return request
+}
+
+func multipartBackupRequest(t *testing.T, content []byte) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "backup", "filename": "backup.zip"}))
+	header.Set("Content-Type", "application/zip")
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatalf("create backup part: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatalf("write backup content: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close backup writer: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/backup/import", &body)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	return request
 }

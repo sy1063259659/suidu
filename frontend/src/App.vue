@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import axios from 'axios'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, Eye, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Tags, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
+import { Archive, ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, Eye, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Tags, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NButtonGroup, NCard, NDynamicTags, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
   NDatePicker, NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
@@ -13,6 +13,7 @@ import {
 } from './api/auth'
 import { clipboardContentUrl, createClipboard, deleteClipboard, getClipboard, listClipboard, updateClipboardMetadata, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
 import { createClipboardShare, listClipboardShares, publicShareUrl, revokeClipboardShare, type ClipboardShare } from './api/shares'
+import { downloadBackup, importBackup, type ImportBackupResult } from './api/backup'
 import ClipboardItemContent from './components/ClipboardItemContent.vue'
 import ClipboardDetailPage from './components/ClipboardDetailPage.vue'
 import PublicSharePage from './components/PublicSharePage.vue'
@@ -75,7 +76,7 @@ const shareItem = shallowRef<ClipboardItem | null>(null)
 const shareTTL = ref(86400)
 const createdShare = shallowRef<ClipboardShare | null>(null)
 const shareError = ref('')
-const activeView = ref<'clipboard' | 'shares' | 'admin'>('clipboard')
+const activeView = ref<'clipboard' | 'shares' | 'admin' | 'backup'>('clipboard')
 const searchQuery = ref('')
 const itemKindFilter = ref<'all' | ClipboardItemKind>('all')
 const favoritesOnly = ref(false)
@@ -91,6 +92,10 @@ const noteDraft = ref('')
 const tagDraft = ref<string[]>([])
 const tagSaving = ref(false)
 const tagError = ref('')
+const backupImporting = ref(false)
+const backupProgress = ref(0)
+const backupError = ref('')
+const backupSuccess = ref('')
 const itemKindOptions: Array<{ label: string; value: 'all' | ClipboardItemKind }> = [
   { label: '全部', value: 'all' },
   { label: '文本', value: 'text' },
@@ -210,6 +215,43 @@ async function loadShares() {
   sharesLoading.value = true
   shareError.value = ''
   try { shares.value = await listClipboardShares() } catch (errorValue) { shareError.value = errorMessage(errorValue, '无法加载分享链接。') } finally { sharesLoading.value = false }
+}
+
+async function exportBackup() {
+  backupError.value = ''
+  backupSuccess.value = ''
+  try {
+    await downloadBackup()
+    backupSuccess.value = '备份已开始下载。'
+  } catch (errorValue) {
+    backupError.value = errorMessage(errorValue, '备份导出失败，请稍后重试。')
+  }
+}
+
+async function uploadBackup(file: File) {
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    backupError.value = '请选择 .zip 格式的 Suidu 备份文件。'
+    return
+  }
+  backupImporting.value = true
+  backupProgress.value = 0
+  backupError.value = ''
+  backupSuccess.value = ''
+  try {
+    const result: ImportBackupResult = await importBackup(file, (percent) => { backupProgress.value = percent })
+    backupSuccess.value = `迁移完成：导入 ${result.imported} 条，跳过重复 ${result.skippedDuplicates} 条。`
+    await loadItems()
+  } catch (errorValue) {
+    backupError.value = errorMessage(errorValue, '备份导入失败，请确认文件完整且来自 Suidu。')
+  } finally {
+    backupImporting.value = false
+  }
+}
+
+function handleBackupUpload(options: UploadCustomRequestOptions) {
+  const file = options.file.file
+  if (!file) { options.onError(); return }
+  void uploadBackup(file).then(() => options.onFinish()).catch(() => options.onError())
 }
 
 async function loadSession() {
@@ -529,6 +571,7 @@ async function refreshActiveView() {
     if (isDetailPage.value) await loadDetailItem()
     else if (activeView.value === 'shares') await loadShares()
     else if (activeView.value === 'admin') await loadAdminUsers()
+    else if (activeView.value === 'backup') return
     else await loadItems()
   } finally { refreshLoading.value = false }
 }
@@ -586,6 +629,8 @@ onUnmounted(() => {
       <n-space align="center" :size="12">
         <n-button v-if="!isDetailPage" :type="activeView === 'shares' ? 'primary' : 'default'" @click="activeView = activeView === 'shares' ? 'clipboard' : 'shares'"><template #icon><Share2 v-if="activeView !== 'shares'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'shares' ? '返回剪贴板' : '分享管理' }}
         </n-button>
+        <n-button v-if="!isDetailPage" :type="activeView === 'backup' ? 'primary' : 'default'" @click="activeView = activeView === 'backup' ? 'clipboard' : 'backup'"><template #icon><Archive v-if="activeView !== 'backup'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'backup' ? '返回剪贴板' : '备份迁移' }}
+        </n-button>
         <n-button v-if="isAdmin && !isDetailPage" :type="activeView === 'admin' ? 'primary' : 'default'" @click="activeView = activeView === 'admin' ? 'clipboard' : 'admin'"><template #icon><ShieldCheck v-if="activeView !== 'admin'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'admin' ? '返回剪贴板' : '管理中心' }}
         </n-button>
         <n-tag :type="isAdmin ? 'warning' : 'info'">{{ currentUser.username }} · {{ isAdmin ? '管理员' : '普通用户' }}
@@ -609,6 +654,17 @@ onUnmounted(() => {
           </n-alert>
         </n-card>
         <ClipboardDetailPage v-if="isDetailPage" :item="detailItem" :loading="detailLoading" :unavailable="detailUnavailable" :favorite-updating="favoriteUpdatingId === detailItemId" :copied="copiedId === detailItemId" @back="closeDetail" @copy="copyItem" @favorite="toggleFavorite" @organize="openTagModal" @share="openShareModal" @delete="removeItem" />
+        <main v-else-if="activeView === 'backup'" class="backup-page">
+          <section class="page-intro"><div><p class="eyebrow">BACKUP &amp; MIGRATION</p><h1>备份与迁移</h1><p class="intro-copy">导出记录和附件，换服务器时可以直接恢复。</p></div><n-tag round :bordered="false" type="info"><template #icon><Archive :size="14" /></template>ZIP 备份</n-tag></section>
+          <n-alert v-if="backupError" type="error" closable class="error-alert" @close="backupError = ''">{{ backupError }}
+          </n-alert>
+          <n-alert v-if="backupSuccess" type="success" closable class="error-alert" @close="backupSuccess = ''">{{ backupSuccess }}
+          </n-alert>
+          <section class="backup-grid">
+            <n-card class="backup-card" :bordered="false"><div class="panel-heading"><div class="panel-icon"><Download :size="18" /></div><div><h2>导出备份</h2><p>包含文本、图片、文件、备注、标签和收藏状态。</p></div></div><n-button type="primary" block @click="exportBackup"><template #icon><Download :size="16" /></template>下载 ZIP 备份</n-button></n-card>
+            <n-card class="backup-card" :bordered="false"><div class="panel-heading"><div class="panel-icon"><Archive :size="18" /></div><div><h2>导入备份</h2><p>导入只会新增记录，已有的重复内容会自动跳过。</p></div></div><n-upload accept=".zip,application/zip" :show-file-list="false" :custom-request="handleBackupUpload" :disabled="backupImporting"><n-upload-dragger><div class="upload-drop-content"><div class="upload-icon"><Archive :size="22" /></div><div><strong>选择或拖入 ZIP 备份</strong><span>不会覆盖当前数据，最大 1 GiB</span></div></div></n-upload-dragger></n-upload><div v-if="backupImporting" class="upload-status"><n-progress type="line" :percentage="backupProgress" :show-indicator="false" processing /><n-text depth="3">正在导入备份…</n-text></div></n-card>
+          </section>
+        </main>
         <main v-else-if="activeView === 'admin'" class="admin-page">
           <section class="admin-hero"><div><p class="eyebrow">ADMINISTRATION</p><h1>管理中心</h1><p class="intro-copy">管理随渡账号、登录权限和日常使用身份。</p></div><n-tag type="warning" :bordered="false"><template #icon><ShieldCheck :size="14" /></template>管理员</n-tag></section>
           <section class="admin-metrics"><div class="metric-item"><Users :size="18" /><div><span>用户总数</span><strong>{{ adminUsers.length }}</strong></div></div><div class="metric-item"><UserPlus :size="18" /><div><span>普通用户</span><strong>{{ adminUsers.filter((user) => user.role === 'user').length }}</strong></div></div><div class="metric-item"><KeyRound :size="18" /><div><span>当前账号</span><strong>{{ currentUser.username }}</strong></div></div></section>

@@ -72,6 +72,15 @@ type ItemMetadata struct {
 	Favorite bool
 }
 
+type ImportItem struct {
+	Kind       Kind
+	Content    string
+	Source     string
+	Attachment Attachment
+	Metadata   ItemMetadata
+	CreatedAt  time.Time
+}
+
 type Repository interface {
 	CreateText(ctx context.Context, userID int64, content, source string) (Item, error)
 	CreateAttachment(ctx context.Context, userID int64, attachment Attachment) (Item, error)
@@ -84,4 +93,5 @@ type Repository interface {
 	GetPublicShare(ctx context.Context, token string) (Share, error)
 	RevokeShare(ctx context.Context, userID, id int64) error
 	FindDuplicate(ctx context.Context, userID int64, kind Kind, contentHash string) (Item, error)
+	Import(ctx context.Context, userID int64, input ImportItem) (Item, error)
 }
