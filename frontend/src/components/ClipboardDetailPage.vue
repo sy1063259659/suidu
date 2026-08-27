@@ -5,6 +5,7 @@ import { NButton, NCard, NEmpty, NPopconfirm, NSpace, NSpin, NTag, NText } from 
 import { clipboardContentUrl, type ClipboardItem } from '../api/clipboard'
 import { detectTextFormat } from '../utils/textFormat'
 import ClipboardItemContent from './ClipboardItemContent.vue'
+import ContentToolsPanel from './ContentToolsPanel.vue'
 
 const props = defineProps<{
   item: ClipboardItem | null
@@ -74,6 +75,7 @@ function formatDate(value: string) {
         </section>
 
         <div class="detail-content"><ClipboardItemContent :item="item" /></div>
+        <ContentToolsPanel v-if="item.kind === 'text' || !item.kind" :content="item.content || ''" />
         <section v-if="item.note" class="detail-note"><span>备注</span><p>{{ item.note }}</p></section>
         <div v-if="item.tags?.length" class="item-tags detail-tags" aria-label="记录标签"><n-tag v-for="tag in item.tags" :key="tag" round :bordered="false" type="info">{{ tag }}</n-tag></div>
       </template>
