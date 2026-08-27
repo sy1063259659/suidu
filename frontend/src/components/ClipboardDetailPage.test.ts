@@ -45,6 +45,14 @@ vi.mock('naive-ui', () => {
     },
   })
 
+  const NImage = defineComponent({
+    name: 'NImageStub',
+    props: { src: String, alt: String },
+    setup(props, { attrs }) {
+      return () => h('img', { ...attrs, src: props.src, alt: props.alt, 'data-image-preview': 'true' })
+    },
+  })
+
   const NPopconfirm = defineComponent({
     name: 'NPopconfirmStub',
     setup(_, { slots }) {
@@ -83,7 +91,7 @@ vi.mock('naive-ui', () => {
     },
   })
 
-  return { NButton, NCard, NEmpty, NPopconfirm, NSpin, NSpace, NTag, NText }
+  return { NButton, NCard, NEmpty, NImage, NPopconfirm, NSpin, NSpace, NTag, NText }
 })
 
 import ClipboardDetailPage from './ClipboardDetailPage.vue'
