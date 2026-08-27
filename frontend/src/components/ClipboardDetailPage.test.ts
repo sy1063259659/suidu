@@ -3,6 +3,12 @@ import { renderToString } from 'vue/server-renderer'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('naive-ui', () => {
+  const NAlert = defineComponent({
+    name: 'NAlertStub',
+    setup(_, { attrs, slots }) {
+      return () => h('div', attrs, slots.default?.())
+    },
+  })
   const NButton = defineComponent({
     name: 'NButtonStub',
     props: {
@@ -91,7 +97,7 @@ vi.mock('naive-ui', () => {
     },
   })
 
-  return { NButton, NCard, NEmpty, NImage, NPopconfirm, NSpin, NSpace, NTag, NText }
+  return { NAlert, NButton, NCard, NEmpty, NImage, NPopconfirm, NSpin, NSpace, NTag, NText }
 })
 
 import ClipboardDetailPage from './ClipboardDetailPage.vue'
@@ -170,5 +176,15 @@ describe('ClipboardDetailPage', () => {
     expect(html).toContain('class="detail-actions"')
     expect(html.match(/detail-action-button/g)?.length).toBe(5)
     expect(html).toContain('detail-action-button detail-delete-action')
+  })
+
+  it('shows browser-side quick conversion tools for text records only', async () => {
+    const textHtml = await renderDetailPage({ item: createItem({ content: '{"name":"随渡"}' }) })
+    const imageHtml = await renderDetailPage({ item: createItem({ kind: 'image', content: undefined, fileName: 'shot.png' }) })
+
+    expect(textHtml).toContain('快捷转换')
+    expect(textHtml).toContain('格式化 JSON')
+    expect(textHtml).toContain('Base64 编码')
+    expect(imageHtml).not.toContain('快捷转换')
   })
 })
