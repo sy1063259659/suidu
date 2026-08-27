@@ -53,6 +53,8 @@ func (h *Handler) RegisterRoutes(router gin.IRouter) {
 	router.POST("/clipboard/:id/shares", h.createShare)
 	router.GET("/shares", h.listShares)
 	router.POST("/shares/:id/revoke", h.revokeShare)
+	router.GET("/backup/export", h.exportBackup)
+	router.POST("/backup/import", h.importBackup)
 }
 
 func (h *Handler) get(c *gin.Context) {

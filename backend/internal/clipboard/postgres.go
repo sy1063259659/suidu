@@ -82,6 +82,38 @@ func (r *PostgresRepository) FindDuplicate(ctx context.Context, userID int64, ki
 	return item, err
 }
 
+func (r *PostgresRepository) Import(ctx context.Context, userID int64, input ImportItem) (Item, error) {
+	metadata, err := normalizeMetadata(input.Metadata)
+	if err != nil {
+		return Item{}, err
+	}
+	createdAt := input.CreatedAt.UTC()
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	var item Item
+	if input.Kind == KindText {
+		if err := validateContent(input.Content); err != nil {
+			return Item{}, err
+		}
+		err = r.pool.QueryRow(ctx, `
+			INSERT INTO clipboard_items (user_id, kind, content, content_hash, note, source, created_at, tags, favorite)
+			VALUES ($1, 'text', $2, $3, $4, $5, $6, $7, $8)
+			RETURNING `+itemColumns+`
+		`, userID, input.Content, textContentHash(input.Content), metadata.Note, normalizeSource(input.Source), createdAt, metadata.Tags, metadata.Favorite).Scan(itemDestinations(&item)...)
+		return item, err
+	}
+	if err := validateAttachment(input.Attachment); err != nil || input.Attachment.Kind != input.Kind {
+		return Item{}, ErrInvalidFile
+	}
+	err = r.pool.QueryRow(ctx, `
+		INSERT INTO clipboard_items (user_id, kind, content, file_name, media_type, size_bytes, storage_key, content_hash, note, source, created_at, tags, favorite)
+		VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING `+itemColumns+`
+	`, userID, input.Kind, normalizeFileName(input.Attachment.FileName), input.Attachment.MediaType, input.Attachment.SizeBytes, input.Attachment.StorageKey, input.Attachment.ContentHash, metadata.Note, normalizeSource(input.Attachment.Source), createdAt, metadata.Tags, metadata.Favorite).Scan(itemDestinations(&item)...)
+	return item, err
+}
+
 func (r *PostgresRepository) Get(ctx context.Context, userID, id int64) (Item, error) {
 	var item Item
 	err := r.pool.QueryRow(ctx, `SELECT `+itemColumns+` FROM clipboard_items WHERE user_id = $1 AND id = $2`, userID, id).Scan(itemDestinations(&item)...)
