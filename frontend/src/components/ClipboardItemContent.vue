@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { File, Image } from '@lucide/vue'
+import { NImage } from 'naive-ui'
 import { clipboardContentUrl, type ClipboardItem } from '../api/clipboard'
 import RichTextContent from './RichTextContent.vue'
 
@@ -25,9 +26,10 @@ function formatFileSize(value = 0) {
 <template>
   <RichTextContent v-if="item.kind === 'text' || !item.kind" :content="item.content || ''" :preview="preview" @view-detail="emit('viewDetail')" />
   <div v-else-if="item.kind === 'image'" class="attachment-content image-attachment">
-    <a :href="itemContentUrl()" target="_blank" rel="noopener" class="image-preview-link">
+    <button v-if="preview" type="button" class="image-preview-link image-detail-trigger" aria-label="查看图片详情" @click="emit('viewDetail')">
       <img :src="itemContentUrl()" :alt="item.fileName || '剪贴板图片'" loading="lazy" />
-    </a>
+    </button>
+    <n-image v-else :src="itemContentUrl()" :alt="item.fileName || '剪贴板图片'" object-fit="contain" lazy class="image-preview-link" />
     <div class="attachment-details"><Image :size="18" /><div><strong>{{ item.fileName }}</strong><span>{{ formatFileSize(item.sizeBytes) }}</span></div></div>
   </div>
   <div v-else class="attachment-content file-attachment">
