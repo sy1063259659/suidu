@@ -128,7 +128,7 @@ const hasActiveFilters = computed(() => (
   || favoritesOnly.value
   || timePreset.value !== 'all'
 ))
-const emptyHistoryDescription = computed(() => hasActiveFilters.value ? '没有找到匹配的记录' : '还没有剪贴板记录')
+const emptyHistoryDescription = computed(() => hasActiveFilters.value ? '没有找到匹配的记录' : '还没有内容记录')
 const historyResultsStyle = computed(() => preservedResultsStyle(
   favoriteResultsMinHeight.value,
   favoritesOnly.value || favoritesFilterTransitioning.value,
@@ -155,7 +155,7 @@ function duplicateDescription(item: ClipboardItem) {
 }
 
 function confirmDuplicate(item: ClipboardItem) {
-  return window.confirm(`${duplicateDescription(item)}已存在于剪贴板记录中，是否仍要创建一条新的记录？`)
+  return window.confirm(`${duplicateDescription(item)}已存在于内容库中，是否仍要创建一条新的记录？`)
 }
 
 async function loadItems() {
@@ -199,7 +199,7 @@ async function loadDetailItem() {
     if (detailItemId.value !== requestedID) return
     detailItem.value = null
     detailUnavailable.value = axios.isAxiosError(errorValue) && errorValue.response?.status === 404
-    if (!detailUnavailable.value) error.value = '无法加载记录详情，请稍后重试。'
+    if (!detailUnavailable.value) error.value = '无法加载内容详情，请稍后重试。'
   } finally {
     if (detailItemId.value === requestedID) detailLoading.value = false
   }
@@ -627,11 +627,11 @@ onUnmounted(() => {
     <n-layout-header bordered class="app-header">
       <div><div class="brand">随渡 <span>SUIDU</span></div><div class="subtitle">把文字放在随手可取的地方</div></div>
       <n-space align="center" :size="12">
-        <n-button v-if="!isDetailPage" :type="activeView === 'shares' ? 'primary' : 'default'" @click="activeView = activeView === 'shares' ? 'clipboard' : 'shares'"><template #icon><Share2 v-if="activeView !== 'shares'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'shares' ? '返回剪贴板' : '分享管理' }}
+        <n-button v-if="!isDetailPage" :type="activeView === 'shares' ? 'primary' : 'default'" @click="activeView = activeView === 'shares' ? 'clipboard' : 'shares'"><template #icon><Share2 v-if="activeView !== 'shares'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'shares' ? '返回内容库' : '分享管理' }}
         </n-button>
-        <n-button v-if="!isDetailPage" :type="activeView === 'backup' ? 'primary' : 'default'" @click="activeView = activeView === 'backup' ? 'clipboard' : 'backup'"><template #icon><Archive v-if="activeView !== 'backup'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'backup' ? '返回剪贴板' : '备份迁移' }}
+        <n-button v-if="!isDetailPage" :type="activeView === 'backup' ? 'primary' : 'default'" @click="activeView = activeView === 'backup' ? 'clipboard' : 'backup'"><template #icon><Archive v-if="activeView !== 'backup'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'backup' ? '返回内容库' : '备份迁移' }}
         </n-button>
-        <n-button v-if="isAdmin && !isDetailPage" :type="activeView === 'admin' ? 'primary' : 'default'" @click="activeView = activeView === 'admin' ? 'clipboard' : 'admin'"><template #icon><ShieldCheck v-if="activeView !== 'admin'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'admin' ? '返回剪贴板' : '管理中心' }}
+        <n-button v-if="isAdmin && !isDetailPage" :type="activeView === 'admin' ? 'primary' : 'default'" @click="activeView = activeView === 'admin' ? 'clipboard' : 'admin'"><template #icon><ShieldCheck v-if="activeView !== 'admin'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'admin' ? '返回内容库' : '管理中心' }}
         </n-button>
         <n-tag :type="isAdmin ? 'warning' : 'info'">{{ currentUser.username }} · {{ isAdmin ? '管理员' : '普通用户' }}
         </n-tag>
@@ -703,9 +703,9 @@ onUnmounted(() => {
           </n-list>
         </main>
         <main v-else class="clipboard-page">
-          <section class="page-intro"><div><p class="eyebrow">CLIPBOARD</p><h1>剪贴板</h1><p class="intro-copy">在手机和电脑之间传递文字、图片和文件。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条{{ hasActiveFilters ? '匹配' : '记录' }}
+          <section class="page-intro"><div><p class="eyebrow">CONTENT LIBRARY</p><h1>内容库</h1><p class="intro-copy">在设备之间保存、整理和传递内容。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条{{ hasActiveFilters ? '匹配' : '记录' }}
           </n-tag></section>
-          <n-card class="composer-card" :bordered="false"><n-input v-model:value="draft" type="textarea" placeholder="输入或粘贴要传递的文字..." :autosize="{ minRows: 5, maxRows: 12 }" maxlength="1048576" show-count @keydown="handleKeydown" /><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
+          <n-card class="composer-card" :bordered="false"><h2 class="composer-title">添加内容</h2><n-input v-model:value="draft" type="textarea" placeholder="输入或粘贴要传递的文字..." :autosize="{ minRows: 5, maxRows: 12 }" maxlength="1048576" show-count @keydown="handleKeydown" /><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
           <n-card class="upload-card" :bordered="false">
             <n-upload multiple :show-file-list="false" :custom-request="uploadFile">
               <n-upload-dragger><div class="upload-drop-content"><div class="upload-icon"><UploadCloud :size="22" /></div><div><strong>上传图片或文件</strong><span>点击、拖入，或直接 Ctrl+V / ⌘V 粘贴截图，单个不超过 100 MiB</span></div></div></n-upload-dragger>
@@ -719,11 +719,11 @@ onUnmounted(() => {
           <section class="history-section" :class="{ 'is-loading': loading }" :aria-busy="loading">
             <div class="history-progress-rail" aria-hidden="true"><span /></div>
             <div class="section-heading">
-              <div><p class="eyebrow">HISTORY</p><h2>剪贴板记录</h2></div>
+              <div><p class="eyebrow">CONTENT TIMELINE</p><h2>内容时间线</h2></div>
               <div class="history-heading-status"><n-text depth="3">{{ hasActiveFilters ? `找到 ${items.length} 条` : '按时间倒序' }}</n-text></div>
             </div>
             <div class="history-toolbar">
-              <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" placeholder="搜索文本、文件名、备注或标签" aria-label="搜索剪贴板记录">
+              <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" placeholder="搜索文本、文件名、备注或标签" aria-label="搜索内容记录">
                 <template #prefix><Search :size="17" /></template>
               </n-input>
               <div class="history-filter-scroll" role="group" aria-label="按类型筛选">

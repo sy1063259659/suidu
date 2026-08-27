@@ -39,18 +39,18 @@ function formatDate(value: string) {
 
 <template>
   <main class="clipboard-detail-page">
-    <n-button quaternary class="detail-back" @click="emit('back')"><template #icon><ArrowLeft :size="17" /></template>返回剪贴板</n-button>
+    <n-button quaternary class="detail-back" @click="emit('back')"><template #icon><ArrowLeft :size="17" /></template>返回内容库</n-button>
     <n-card class="detail-card" :bordered="false">
       <div v-if="loading" class="detail-state"><n-spin size="medium" /></div>
       <n-empty v-else-if="unavailable || !item" class="detail-state" description="这条记录不存在或已被删除">
-        <template #extra><n-button secondary @click="emit('back')">返回剪贴板</n-button></template>
+        <template #extra><n-button secondary @click="emit('back')">返回内容库</n-button></template>
       </n-empty>
       <template v-else>
         <section class="detail-header">
           <div class="detail-heading">
             <div class="detail-heading-copy">
-              <p class="eyebrow">CLIPBOARD DETAIL</p>
-              <h1>记录详情</h1>
+              <p class="eyebrow">CONTENT DETAIL</p>
+              <h1>内容详情</h1>
               <n-text depth="3" class="detail-created-at">创建于 {{ formatDate(item.createdAt) }}</n-text>
             </div>
             <n-space class="detail-heading-status" :size="8" align="center">
