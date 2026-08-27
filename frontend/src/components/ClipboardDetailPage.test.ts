@@ -131,6 +131,14 @@ async function renderDetailPage(props: Partial<InstanceType<typeof ClipboardDeta
 }
 
 describe('ClipboardDetailPage', () => {
+  it('uses the content library naming in the detail view', async () => {
+    const html = await renderDetailPage()
+
+    expect(html).toContain('内容详情')
+    expect(html).toContain('返回内容库')
+    expect(html).not.toContain('返回剪贴板')
+  })
+
   it('renders created time in the header and places the action bar before the content', async () => {
     const html = await renderDetailPage({
       favoriteUpdating: true,
