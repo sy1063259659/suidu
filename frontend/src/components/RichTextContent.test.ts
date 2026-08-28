@@ -30,6 +30,18 @@ describe('RichTextContent', () => {
     expect(html).not.toContain('aria-label="前往详情页查看完整内容"')
   })
 
+  it('always exposes a visible detail action for short code previews', async () => {
+    const html = await renderRichTextContent({
+      content: 'const greeting = "hello"\nconsole.log(greeting)',
+      preview: true,
+    })
+
+    expect(html).toContain('format-code')
+    expect(html).toContain('is-preview-interactive')
+    expect(html).toContain('aria-label="查看代码详情"')
+    expect(html).toContain('>查看详情<')
+  })
+
   it('does not show clamp affordances for long standalone urls in preview', async () => {
     const longUrl = `https://example.com/${'path-segment/'.repeat(40)}?q=${'search-term-'.repeat(20)}`
     const html = await renderRichTextContent({ content: longUrl, preview: true })
