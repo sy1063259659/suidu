@@ -50,6 +50,7 @@ const format = computed(() => detectTextFormat(props.content))
 const long = computed(() => isLongText(props.content))
 const clampableKinds = new Set(['text', 'markdown', 'code', 'json'])
 const shouldClamp = computed(() => props.preview && long.value && clampableKinds.has(format.value.kind))
+const showCodeDetailAction = computed(() => props.preview && (format.value.kind === 'code' || format.value.kind === 'json'))
 const detailActionLabel = '前往详情页'
 const detailActionAriaLabel = '前往详情页查看完整内容'
 const highlightedCode = computed(() => {
@@ -62,12 +63,39 @@ const urlHost = computed(() => {
   try { return new URL(format.value.content).hostname }
   catch { return '' }
 })
+
+function openPreviewDetail(event: MouseEvent) {
+  if (!props.preview) return
+  const target = event.target
+  if (target instanceof Element && target.closest('a, button')) return
+  if (window.getSelection()?.toString()) return
+  emit('viewDetail')
+}
 </script>
 
 <template>
-  <div class="rich-text-content" :class="[`format-${format.kind}`, { 'is-preview-clamped': shouldClamp }]">
+  <div
+    class="rich-text-content"
+    :class="[`format-${format.kind}`, { 'is-preview-clamped': shouldClamp, 'is-preview-interactive': preview }]"
+    @click="openPreviewDetail"
+  >
     <div v-if="format.kind === 'code' || format.kind === 'json'" class="code-panel">
-      <div class="format-bar"><span>{{ format.label }}</span><span>{{ format.content.split('\n').length }} 行</span></div>
+      <div class="format-bar">
+        <span>{{ format.label }}</span>
+        <span class="format-bar-meta">
+          <span>{{ format.content.split('\n').length }} 行</span>
+          <button
+            v-if="showCodeDetailAction"
+            type="button"
+            class="format-detail-action"
+            aria-label="查看代码详情"
+            @click.stop="emit('viewDetail')"
+          >
+            <span>查看详情</span>
+            <ArrowRight :size="13" />
+          </button>
+        </span>
+      </div>
       <pre><code class="hljs" v-html="highlightedCode" /></pre>
     </div>
     <div v-else-if="format.kind === 'markdown'" class="markdown-content" v-html="renderedMarkdown" />
@@ -79,6 +107,7 @@ const urlHost = computed(() => {
     <div v-if="shouldClamp" class="preview-detail-entry">
       <div class="content-clamp-fade" aria-hidden="true" />
       <button
+        v-if="!showCodeDetailAction"
         type="button"
         class="view-full-content"
         :aria-label="detailActionAriaLabel"
@@ -92,6 +121,42 @@ const urlHost = computed(() => {
 </template>
 
 <style scoped>
+.is-preview-interactive > .code-panel,
+.is-preview-interactive > .markdown-content,
+.is-preview-interactive > .plain-text-content {
+  cursor: pointer;
+}
+
+.format-bar-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.format-detail-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: -4px -5px -4px 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  color: #dbe7f7;
+  background: rgba(255, 255, 255, .09);
+  font: inherit;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.format-detail-action:hover {
+  background: rgba(255, 255, 255, .16);
+}
+
+.format-detail-action:focus-visible {
+  outline: 2px solid #82aaff;
+  outline-offset: 2px;
+}
+
 .preview-detail-entry {
   position: absolute;
   right: 0;
