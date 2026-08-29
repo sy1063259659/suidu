@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import axios from 'axios'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { Archive, ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, Eye, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Tags, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
+import { Archive, ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Tags, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NButtonGroup, NCard, NDynamicTags, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
   NDatePicker, NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
@@ -776,7 +776,6 @@ onUnmounted(() => {
                               <n-button quaternary circle :type="item.favorite ? 'warning' : 'default'" :disabled="favoriteUpdatingId === item.id" :aria-busy="favoriteUpdatingId === item.id" :aria-label="item.favorite ? '取消收藏' : '收藏记录'" :title="item.favorite ? '取消收藏' : '收藏记录'" @click="toggleFavorite(item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template></n-button>
                               <n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button>
                               <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button>
-                              <n-button quaternary circle aria-label="查看详情" title="查看完整详情" @click="openDetail(item)"><template #icon><Eye :size="16" /></template></n-button>
                               <n-button quaternary circle aria-label="整理记录" title="添加备注和标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
                               <n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button>
                               <n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm>
