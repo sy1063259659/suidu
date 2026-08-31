@@ -21,9 +21,13 @@ describe('detectTextFormat', () => {
 })
 
 describe('isLongText', () => {
-  it('uses both character and line limits', () => {
+  it('does not collapse a few lines of ordinary text', () => {
     expect(isLongText('短内容')).toBe(false)
-    expect(isLongText('字'.repeat(361))).toBe(true)
-    expect(isLongText(Array.from({ length: 9 }, (_, index) => `第 ${index + 1} 行`).join('\n'))).toBe(true)
+    expect(isLongText(Array.from({ length: 8 }, () => '这是一段比较长但仍然可以快速阅读的普通文本。'.repeat(4)).join('\n'))).toBe(false)
+  })
+
+  it('uses generous character and line limits for genuinely long text', () => {
+    expect(isLongText('字'.repeat(721))).toBe(true)
+    expect(isLongText(Array.from({ length: 13 }, (_, index) => `第 ${index + 1} 行`).join('\n'))).toBe(true)
   })
 })

@@ -11,7 +11,7 @@ async function renderRichTextContent(props: { content: string; preview?: boolean
 
 describe('RichTextContent', () => {
   it('keeps long preview content collapsed without a redundant detail action', async () => {
-    const longContent = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行内容`).join('\n')
+    const longContent = Array.from({ length: 13 }, (_, index) => `第 ${index + 1} 行内容`).join('\n')
     const html = await renderRichTextContent({ content: longContent, preview: true })
 
     expect(html).toContain('is-preview-clamped')

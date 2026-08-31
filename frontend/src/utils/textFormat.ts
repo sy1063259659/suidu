@@ -81,5 +81,5 @@ export function detectTextFormat(rawContent: string): TextFormat {
 }
 
 export function isLongText(content = ''): boolean {
-  return Array.from(content).length > 360 || content.split(/\r?\n/).length > 8
+  return Array.from(content).length > 720 || content.split(/\r?\n/).length > 12
 }
