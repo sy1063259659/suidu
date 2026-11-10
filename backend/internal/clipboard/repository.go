@@ -27,6 +27,11 @@ func validateContent(content string) error {
 }
 
 func normalizeMetadata(metadata ItemMetadata) (ItemMetadata, error) {
+	if metadata.Content != nil {
+		if err := validateContent(*metadata.Content); err != nil {
+			return ItemMetadata{}, err
+		}
+	}
 	metadata.Note = strings.ReplaceAll(metadata.Note, "\r\n", "\n")
 	metadata.Note = strings.ReplaceAll(metadata.Note, "\r", "\n")
 	metadata.Note = strings.TrimSpace(metadata.Note)

@@ -176,6 +176,13 @@ func (r *MemoryRepository) UpdateMetadata(_ context.Context, userID, id int64, m
 		return Item{}, ErrNotFound
 	}
 	item.Tags = normalized.Tags
+	if normalized.Content != nil {
+		if item.Kind != KindText {
+			return Item{}, ErrInvalidMetadata
+		}
+		item.Content = *normalized.Content
+		item.ContentHash = textContentHash(item.Content)
+	}
 	item.Favorite = normalized.Favorite
 	item.Note = normalized.Note
 	r.items[id] = item

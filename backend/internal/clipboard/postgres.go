@@ -196,14 +196,22 @@ func (r *PostgresRepository) UpdateMetadata(ctx context.Context, userID, id int6
 	var item Item
 	err = r.pool.QueryRow(ctx, `
 		UPDATE clipboard_items
-		SET note = $3, tags = $4, favorite = $5
-		WHERE user_id = $1 AND id = $2
+		SET note = $3, tags = $4, favorite = $5,
+		    content = COALESCE($6, content), content_hash = CASE WHEN $6::text IS NULL THEN content_hash ELSE $7 END
+		WHERE user_id = $1 AND id = $2 AND ($6::text IS NULL OR kind = 'text')
 		RETURNING `+itemColumns+`
-	`, userID, id, normalized.Note, normalized.Tags, normalized.Favorite).Scan(itemDestinations(&item)...)
+	`, userID, id, normalized.Note, normalized.Tags, normalized.Favorite, normalized.Content, metadataContentHash(normalized)).Scan(itemDestinations(&item)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Item{}, ErrNotFound
 	}
 	return item, err
+}
+
+func metadataContentHash(metadata ItemMetadata) string {
+	if metadata.Content == nil {
+		return ""
+	}
+	return textContentHash(*metadata.Content)
 }
 
 func (r *PostgresRepository) Delete(ctx context.Context, userID, id int64) error {

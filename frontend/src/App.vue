@@ -67,6 +67,30 @@ const refreshLoading = ref(false)
 const copiedId = ref<number | null>(null)
 const copiedShareId = ref<number | null>(null)
 const uploadError = ref('')
+const editItem = shallowRef<ClipboardItem | null>(null)
+const editDraft = ref('')
+const editSaving = ref(false)
+const editError = ref('')
+
+function openEditor(item: ClipboardItem) {
+  editItem.value = item
+  editDraft.value = item.content ?? ''
+  editError.value = ''
+}
+
+async function saveContent() {
+  const item = editItem.value
+  if (!item || editSaving.value || !editDraft.value.trim()) return
+  editSaving.value = true
+  editError.value = ''
+  try {
+    replaceItem(await updateClipboardMetadata(item.id, item.note ?? '', item.tags ?? [], Boolean(item.favorite), editDraft.value))
+    editItem.value = null
+    if (hasActiveFilters.value) void loadItems()
+  } catch (err) {
+    editError.value = errorMessage(err, '保存失败，请稍后重试。')
+  } finally { editSaving.value = false }
+}
 const uploadProgress = ref<Record<string, number>>({})
 const shares = ref<ClipboardShare[]>([])
 const sharesLoading = ref(false)
@@ -313,7 +337,7 @@ async function submitClipboard() {
   if (!canSubmit.value) return
   submitting.value = true; error.value = ''
   try {
-    const content = draft.value.trim()
+    const content = draft.value
     let item: ClipboardItem
     try {
       item = await createClipboard(content)
@@ -387,7 +411,7 @@ function uploadFile(options: UploadCustomRequestOptions) {
 }
 
 function handlePaste(event: ClipboardEvent) {
-  if (!currentUser.value || activeView.value !== 'clipboard' || isDetailPage.value || shareModalOpen.value || tagModalOpen.value || passwordFormOpen.value) return
+  if (!currentUser.value || activeView.value !== 'clipboard' || isDetailPage.value || editItem.value || shareModalOpen.value || tagModalOpen.value || passwordFormOpen.value) return
   const clipboard = event.clipboardData
   if (!clipboard) return
   const files = Array.from(clipboard.files)
@@ -578,7 +602,7 @@ async function refreshActiveView() {
 
 function formatDateTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function formatHistoryItemTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) }
-function handleKeydown(event: KeyboardEvent) { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
+function handleKeydown(event: KeyboardEvent) { if (!event.isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
 
 watch([searchQuery, itemKindFilter, favoritesOnly, timePreset, customTimeRange], () => {
   if (searchTimer) window.clearTimeout(searchTimer)
@@ -653,7 +677,7 @@ onUnmounted(() => {
           </n-alert><n-alert v-if="passwordSuccess" type="success" class="form-alert">{{ passwordSuccess }}
           </n-alert>
         </n-card>
-        <ClipboardDetailPage v-if="isDetailPage" :item="detailItem" :loading="detailLoading" :unavailable="detailUnavailable" :favorite-updating="favoriteUpdatingId === detailItemId" :copied="copiedId === detailItemId" @back="closeDetail" @copy="copyItem" @favorite="toggleFavorite" @organize="openTagModal" @share="openShareModal" @delete="removeItem" />
+        <ClipboardDetailPage v-if="isDetailPage" :item="detailItem" :loading="detailLoading" :unavailable="detailUnavailable" :favorite-updating="favoriteUpdatingId === detailItemId" :copied="copiedId === detailItemId" @back="closeDetail" @copy="copyItem" @edit="openEditor" @favorite="toggleFavorite" @organize="openTagModal" @share="openShareModal" @delete="removeItem" />
         <main v-else-if="activeView === 'backup'" class="backup-page">
           <section class="page-intro"><div><p class="eyebrow">BACKUP &amp; MIGRATION</p><h1>备份与迁移</h1><p class="intro-copy">导出记录和附件，换服务器时可以直接恢复。</p></div><n-tag round :bordered="false" type="info"><template #icon><Archive :size="14" /></template>ZIP 备份</n-tag></section>
           <n-alert v-if="backupError" type="error" closable class="error-alert" @close="backupError = ''">{{ backupError }}
@@ -705,7 +729,7 @@ onUnmounted(() => {
         <main v-else class="clipboard-page">
           <section class="page-intro"><div><p class="eyebrow">CONTENT LIBRARY</p><h1>内容库</h1><p class="intro-copy">在设备之间保存、整理和传递内容。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条{{ hasActiveFilters ? '匹配' : '记录' }}
           </n-tag></section>
-          <n-card class="composer-card" :bordered="false"><h2 class="composer-title">添加内容</h2><n-input v-model:value="draft" type="textarea" placeholder="输入或粘贴要传递的文字..." :autosize="{ minRows: 5, maxRows: 12 }" maxlength="1048576" show-count @keydown="handleKeydown" /><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
+          <n-card class="composer-card" :bordered="false"><h2 class="composer-title">添加内容</h2><textarea v-model="draft" class="content-editor" aria-label="添加内容" placeholder="输入或粘贴要传递的文字..." rows="5" maxlength="1048576" @keydown.stop="handleKeydown" /><div class="editor-hint">Enter 换行 · Ctrl/⌘ + Enter 提交</div><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
           <n-card class="upload-card" :bordered="false">
             <n-upload multiple :show-file-list="false" :custom-request="uploadFile">
               <n-upload-dragger><div class="upload-drop-content"><div class="upload-icon"><UploadCloud :size="22" /></div><div><strong>上传图片或文件</strong><span>点击、拖入，或直接 Ctrl+V / ⌘V 粘贴截图，单个不超过 100 MiB</span></div></div></n-upload-dragger>
@@ -777,6 +801,7 @@ onUnmounted(() => {
                               <n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button>
                               <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button>
                               <n-button quaternary circle aria-label="整理记录" title="添加备注和标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
+                              <n-button v-if="item.kind === 'text' || !item.kind" quaternary @click="openEditor(item)">编辑</n-button>
                               <n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button>
                               <n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm>
                             </n-space>
@@ -804,6 +829,12 @@ onUnmounted(() => {
         <n-alert v-if="shareError" type="error" class="form-alert">{{ shareError }}</n-alert>
         <n-space justify="end" class="share-modal-actions"><n-button @click="shareModalOpen = false">取消</n-button><n-button type="primary" :loading="shareCreating" @click="submitShare"><template #icon><Share2 :size="16" /></template>生成链接</n-button></n-space>
       </template>
+    </n-modal>
+    <n-modal :show="Boolean(editItem)" preset="card" title="编辑内容" class="edit-content-modal" :mask-closable="!editSaving" :close-on-esc="!editSaving" :closable="!editSaving" @update:show="(show: boolean) => { if (!show && !editSaving) editItem = null }">
+      <textarea v-model="editDraft" class="content-editor" aria-label="编辑内容" rows="14" maxlength="1048576" :disabled="editSaving" @keydown.stop="(event: KeyboardEvent) => { if (!event.isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void saveContent() } }" />
+      <div class="editor-hint">Enter 换行 · Ctrl/⌘ + Enter 保存</div>
+      <n-alert v-if="editError" type="error" class="form-alert">{{ editError }}</n-alert>
+      <n-space justify="end" class="tag-modal-actions"><n-button :disabled="editSaving" @click="editItem = null">取消</n-button><n-button type="primary" :loading="editSaving" :disabled="!editDraft.trim()" @click="saveContent">保存</n-button></n-space>
     </n-modal>
     <n-modal v-model:show="tagModalOpen" preset="card" title="整理记录" class="tag-modal" :mask-closable="!tagSaving">
       <label class="organize-field-label" for="clipboard-note">备注</label>
