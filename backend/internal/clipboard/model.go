@@ -67,6 +67,7 @@ type ListFilter struct {
 }
 
 type ItemMetadata struct {
+	Content  *string
 	Note     string
 	Tags     []string
 	Favorite bool

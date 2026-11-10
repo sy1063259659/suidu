@@ -454,6 +454,49 @@ func TestHandlerRejectsInvalidContent(t *testing.T) {
 	}
 }
 
+func TestHandlerEditsTextPreservingWhitespaceAndIdentity(t *testing.T) {
+	repo := NewMemoryRepository()
+	item, _ := repo.CreateText(t.Context(), 1, "original", "web")
+	router := newTestRouter(repo)
+	content := "  first\n\n    second\n"
+	body, _ := json.Marshal(map[string]any{"content": content, "note": "note", "tags": []string{"work"}, "favorite": true})
+	request := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/clipboard/%d", item.ID), bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("edit = %d: %s", response.Code, response.Body.String())
+	}
+	updated, _ := repo.Get(t.Context(), 1, item.ID)
+	if updated.Content != content || !updated.CreatedAt.Equal(item.CreatedAt) || !updated.Favorite || updated.Note != "note" {
+		t.Fatalf("unexpected edit: %#v", updated)
+	}
+	if _, err := repo.FindDuplicate(t.Context(), 1, KindText, textContentHash(content)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.FindDuplicate(t.Context(), 1, KindText, textContentHash("original")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale hash: %v", err)
+	}
+	other := newTestRouterWithStore(repo, filestore.NewMemoryStore(), 2, 100)
+	request = httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/clipboard/%d", item.ID), bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	other.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("other user edit = %d", response.Code)
+	}
+	for _, invalid := range []string{"  ", strings.Repeat("x", MaxContentBytes+1)} {
+		body, _ = json.Marshal(map[string]any{"content": invalid})
+		request = httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/clipboard/%d", item.ID), bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response = httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid edit = %d", response.Code)
+		}
+	}
+}
+
 func TestHandlerUpdatesMetadataAndFiltersFavorites(t *testing.T) {
 	repo := NewMemoryRepository()
 	item, err := repo.CreateText(t.Context(), 1, "release checklist", "web")

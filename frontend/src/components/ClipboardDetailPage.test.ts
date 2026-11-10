@@ -168,6 +168,8 @@ describe('ClipboardDetailPage', () => {
     })
 
     expect(textHtml).toContain('>复制</button>')
+    expect(textHtml).toContain('>编辑</button>')
+    expect(fileHtml).not.toContain('>编辑</button>')
     expect(textHtml).not.toContain('>下载</a>')
     expect(fileHtml).toContain('/api/clipboard/42/content?download=1')
     expect(fileHtml).toContain('>下载</a>')

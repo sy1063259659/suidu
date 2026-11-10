@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowLeft, Copy, Download, Paperclip, Share2, Star, Tags, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Copy, Download, Paperclip, Pencil, Share2, Star, Tags, Trash2 } from '@lucide/vue'
 import { NButton, NCard, NEmpty, NPopconfirm, NSpace, NSpin, NTag, NText } from 'naive-ui'
 import { clipboardContentUrl, type ClipboardItem } from '../api/clipboard'
 import { detectTextFormat } from '../utils/textFormat'
@@ -17,6 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   back: []
   copy: [item: ClipboardItem]
+  edit: [item: ClipboardItem]
   favorite: [item: ClipboardItem]
   organize: [item: ClipboardItem]
   share: [item: ClipboardItem]
@@ -61,6 +62,7 @@ function formatDate(value: string) {
 
           <div class="detail-toolbar">
             <div class="detail-actions">
+              <n-button v-if="item.kind === 'text' || !item.kind" secondary @click="emit('edit', item)"><template #icon><Pencil :size="16" /></template>编辑</n-button>
               <n-button class="detail-action-button" :type="item.favorite ? 'warning' : 'default'" secondary :disabled="favoriteUpdating" :aria-busy="favoriteUpdating" @click="emit('favorite', item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template>{{ item.favorite ? '取消收藏' : '收藏' }}</n-button>
               <n-button v-if="item.kind === 'text' || !item.kind" class="detail-action-button" secondary @click="emit('copy', item)"><template #icon><Copy :size="16" /></template>{{ copied ? '已复制' : '复制' }}</n-button>
               <n-button v-else tag="a" class="detail-action-button" :href="clipboardContentUrl(item.id, true)" secondary><template #icon><Download :size="16" /></template>下载</n-button>

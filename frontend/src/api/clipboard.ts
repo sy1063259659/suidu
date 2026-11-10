@@ -46,8 +46,8 @@ export async function getClipboard(id: number): Promise<ClipboardItem> {
   return data
 }
 
-export async function updateClipboardMetadata(id: number, note: string, tags: string[], favorite: boolean): Promise<ClipboardItem> {
-  const { data } = await api.patch<ClipboardItem>(`/clipboard/${id}`, { note, tags, favorite })
+export async function updateClipboardMetadata(id: number, note: string, tags: string[], favorite: boolean, content?: string): Promise<ClipboardItem> {
+  const { data } = await api.patch<ClipboardItem>(`/clipboard/${id}`, { note, tags, favorite, content })
   return data
 }
 

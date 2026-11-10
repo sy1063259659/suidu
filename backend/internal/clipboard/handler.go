@@ -147,6 +147,7 @@ func (h *Handler) list(c *gin.Context) {
 }
 
 type metadataRequest struct {
+	Content  *string  `json:"content"`
 	Note     string   `json:"note"`
 	Tags     []string `json:"tags"`
 	Favorite bool     `json:"favorite"`
@@ -167,7 +168,11 @@ func (h *Handler) updateMetadata(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "request body must be valid JSON")
 		return
 	}
-	item, err := h.repo.UpdateMetadata(c.Request.Context(), user.ID, id, ItemMetadata{Note: request.Note, Tags: request.Tags, Favorite: request.Favorite})
+	item, err := h.repo.UpdateMetadata(c.Request.Context(), user.ID, id, ItemMetadata{Content: request.Content, Note: request.Note, Tags: request.Tags, Favorite: request.Favorite})
+	if errors.Is(err, ErrEmptyContent) || errors.Is(err, ErrContentTooLarge) {
+		writeError(c, http.StatusBadRequest, "content must not be empty and must be at most 1 MiB")
+		return
+	}
 	if errors.Is(err, ErrInvalidMetadata) {
 		writeError(c, http.StatusBadRequest, "use a note with at most 500 characters and at most 10 tags with at most 24 characters each")
 		return
