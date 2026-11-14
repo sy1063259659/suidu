@@ -191,6 +191,10 @@ func (r *PostgresRepository) List(ctx context.Context, userID int64, filter List
 }
 
 func buildListItemsQuery(userID int64, filter ListFilter) (string, []any) {
+	var cursorTime, cursorID any
+	if filter.Cursor != nil {
+		cursorTime, cursorID = filter.Cursor.CreatedAt, filter.Cursor.ID
+	}
 	return `
 		SELECT ` + itemColumns + `
 		FROM clipboard_items
@@ -206,6 +210,7 @@ func buildListItemsQuery(userID int64, filter ListFilter) (string, []any) {
 		  )
 		  AND ($5::timestamptz IS NULL OR created_at >= $5)
 		  AND ($6::timestamptz IS NULL OR created_at < $6)
+		  AND ($8::timestamptz IS NULL OR (created_at, id) < ($8, $9::bigint))
 		ORDER BY created_at DESC, id DESC
 		LIMIT NULLIF($7, 0)
 	`, []any{
@@ -216,6 +221,8 @@ func buildListItemsQuery(userID int64, filter ListFilter) (string, []any) {
 			timeValueOrNil(filter.CreatedFrom),
 			timeValueOrNil(filter.CreatedBefore),
 			filter.Limit,
+			cursorTime,
+			cursorID,
 		}
 }
 

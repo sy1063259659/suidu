@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import axios from 'axios'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { Archive, ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Maximize2, MoreHorizontal, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
+import { Archive, ArrowLeft, ChevronUp, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, List, LogIn, Maximize2, MoreHorizontal, Plus, RefreshCw, Search, Send, Share2, ShieldCheck, SlidersHorizontal, Star, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NButtonGroup, NCard, NDynamicTags, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
   NDatePicker, NDropdown, NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
@@ -11,20 +11,23 @@ import {
   changePassword, createUser, getCurrentUser, listUsers, login, logout, resetUserPassword,
   setUserDisabled, type User,
 } from './api/auth'
-import { createClipboard, deleteClipboard, getChangesVersion, getClipboard, listClipboard, listTrash, purgeClipboard, restoreClipboard, updateClipboardMetadata, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
+import { createClipboard, deleteClipboard, getChangesVersion, getClipboard, listClipboardPage, listTrash, purgeClipboard, restoreClipboard, updateClipboardMetadata, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
 import { createClipboardShare, listClipboardShares, publicShareUrl, revokeClipboardShare, type ClipboardShare } from './api/shares'
 import { downloadBackup, importBackup, type ImportBackupResult } from './api/backup'
 import ClipboardItemContent from './components/ClipboardItemContent.vue'
 import ClipboardDetailPage from './components/ClipboardDetailPage.vue'
 import PublicSharePage from './components/PublicSharePage.vue'
-import ItemActions from './components/ItemActions.vue'
+import ContentLibraryCard from './components/ContentLibraryCard.vue'
+import UploadQueue from './components/UploadQueue.vue'
 import TrashPage from './components/TrashPage.vue'
 import { clearDraft, readDraft, readStoredDraft, writeDraft } from './utils/draftStorage'
 import { readLibraryState, writeLibraryState } from './utils/libraryState'
+import { canApplyLibraryRequest, fetchLibraryRange, newlySyncedLibraryIds, oldestLibraryBoundary, uniqueLibraryItems, type LibraryBoundary } from './utils/libraryPagination'
 import { captureResultsHeight, preservedResultsStyle } from './utils/historyLayout'
 import { MAX_TEXT_BYTES, formatTextBytes, textStats } from './utils/textEditor'
 import { createAutoSync } from './utils/autoSync'
 import { captureHistoryAnchors, reconcileItems, restoreHistoryAnchor } from './utils/liveHistory'
+import { readDisplayMode, writeDisplayMode, type DisplayMode } from './utils/displayPreferences'
 import {
   applyCustomTimeFilter,
   applyTimePreset,
@@ -112,6 +115,18 @@ function discardEdits() {
   persistDrafts()
 }
 const loading = ref(false)
+const hasMore = ref(false)
+const loadingMore = ref(false)
+const loadMoreError = ref('')
+const syncAddedCount = ref(0)
+const recentlySyncedIds = shallowRef(new Set<number>())
+let syncNoticeTimer: ReturnType<typeof setTimeout> | undefined
+let loadedBoundary: LibraryBoundary | null = null
+let nextLibraryCursor = ''
+let libraryBaselineReady = false
+let libraryFilterGeneration = 0
+const locallyCreatedIds = new Set<number>()
+let refreshLibraryAfterMore = false
 const submitting = ref(false)
 const error = ref('')
 const apiStatus = ref<'checking' | 'online' | 'offline'>('checking')
@@ -286,6 +301,8 @@ const groupedHistoryItems = computed(() => groupTimelineItemsByLocalDay(items.va
 let searchTimer: ReturnType<typeof window.setTimeout> | undefined
 let listRequestSequence = 0
 let collectionEpoch = 0
+let libraryContentEpoch = 0
+let libraryActivityEpoch = 0
 let restoringWorkspace = false
 let libraryScrollY = 0
 let draftTimer: ReturnType<typeof setTimeout> | undefined
@@ -297,7 +314,7 @@ function rememberLibrary() {
   const session = storage('sessionStorage')
   if (session) writeLibraryState(session, currentUser.value.id, {
     query: searchQuery.value, kind: itemKindFilter.value, favorites: favoritesOnly.value,
-    preset: timePreset.value, range: customTimeRange.value, scrollY: libraryScrollY,
+    preset: timePreset.value, range: customTimeRange.value, scrollY: libraryScrollY, loadedBoundary,
   })
 }
 function captureLibraryPosition() {
@@ -362,9 +379,20 @@ function confirmDuplicate(item: ClipboardItem) {
 }
 
 async function loadItems(silent = false): Promise<boolean> {
+  if (loadingMore.value) {
+    if (!silent) refreshLibraryAfterMore = true
+    return false
+  }
   const requestSequence = ++listRequestSequence
+  const generation = sessionGeneration
   const epoch = collectionEpoch
+  const requestEpoch = { mutation: libraryContentEpoch, activity: libraryActivityEpoch }
   const view = syncViewKey()
+  const filterGeneration = libraryFilterGeneration
+  const canApply = () => requestSequence === listRequestSequence && isCurrentSession(generation)
+    && canApplyLibraryRequest(requestEpoch, { mutation: libraryContentEpoch, activity: libraryActivityEpoch }, silent)
+    && filterGeneration === libraryFilterGeneration
+    && (!silent || canApplyBackground(epoch, view))
   if (!silent) {
     loading.value = true
     error.value = ''
@@ -372,26 +400,38 @@ async function loadItems(silent = false): Promise<boolean> {
   }
   try {
     const timeParams = toClipboardTimeParams(resolveTimeRange(timePreset.value, customTimeRange.value, new Date()))
-    const result = await listClipboard({
+    const options = {
+      limit: 50,
       query: searchQuery.value,
       kind: itemKindFilter.value === 'all' ? undefined : itemKindFilter.value,
       favoriteOnly: favoritesOnly.value,
       createdFrom: timeParams.createdFrom,
       createdBefore: timeParams.createdBefore,
-    })
-    if (requestSequence !== listRequestSequence || (silent && !canApplyBackground(epoch, view))) return false
+    }
+    const result = await fetchLibraryRange(cursor => listClipboardPage({ ...options, cursor }), loadedBoundary, canApply)
+    if (!result || !canApply()) return false
     const root = historyResultsElement.value
-    const anchors = silent && root ? captureHistoryAnchors(root) : []
-    items.value = reconcileItems(items.value, result)
+    const anchors = root ? captureHistoryAnchors(root) : []
+    const addedIds = silent && libraryBaselineReady ? newlySyncedLibraryIds(items.value, result.items, locallyCreatedIds) : []
+    items.value = reconcileItems(items.value, result.items)
+    loadedBoundary = oldestLibraryBoundary(result.items, loadedBoundary)
+    nextLibraryCursor = result.nextCursor
+    hasMore.value = result.hasMore
+    loadMoreError.value = ''
+    libraryBaselineReady = true
+    rememberLibrary()
+    if (addedIds.length) showSyncNotice(addedIds)
     apiStatus.value = 'online'
-    if (silent && anchors.length) {
+    if (anchors.length) {
       await nextTick()
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       if (root && requestSequence === listRequestSequence && view === syncViewKey()) restoreHistoryAnchor(root, anchors)
     }
     return true
   } catch (err) {
-    if (requestSequence !== listRequestSequence) return false
+    if (requestSequence !== listRequestSequence || !isCurrentSession(generation)
+      || !canApplyLibraryRequest(requestEpoch, { mutation: libraryContentEpoch, activity: libraryActivityEpoch }, silent)
+      || filterGeneration !== libraryFilterGeneration) return false
     if (silent) throw err
     apiStatus.value = 'offline'
     error.value = '无法连接服务，请稍后重试。'
@@ -400,6 +440,71 @@ async function loadItems(silent = false): Promise<boolean> {
     if (!silent && requestSequence === listRequestSequence) {
       loading.value = false
       favoritesFilterTransitioning.value = false
+    }
+  }
+}
+
+function clearSyncNotice() {
+  if (syncNoticeTimer) clearTimeout(syncNoticeTimer)
+  syncAddedCount.value = 0
+  recentlySyncedIds.value = new Set()
+}
+
+function showSyncNotice(ids: number[]) {
+  clearSyncNotice()
+  syncAddedCount.value = ids.length
+  recentlySyncedIds.value = new Set(ids)
+  syncNoticeTimer = setTimeout(clearSyncNotice, 3000)
+}
+
+function resetLibraryPagination() {
+  libraryFilterGeneration++
+  listRequestSequence++
+  loadedBoundary = null
+  nextLibraryCursor = ''
+  hasMore.value = false
+  loadingMore.value = false
+  refreshLibraryAfterMore = false
+  loadMoreError.value = ''
+  libraryBaselineReady = false
+  clearSyncNotice()
+}
+
+async function loadMoreItems(): Promise<void> {
+  if (!hasMore.value || !nextLibraryCursor || loadingMore.value || loading.value || syncBusy.value) return
+  const generation = sessionGeneration
+  const filterGeneration = libraryFilterGeneration
+  const requestEpoch = { mutation: libraryContentEpoch, activity: libraryActivityEpoch }
+  const sequence = ++listRequestSequence
+  const cursor = nextLibraryCursor
+  const view = syncViewKey()
+  const canApply = () => isCurrentSession(generation) && sequence === listRequestSequence
+    && filterGeneration === libraryFilterGeneration
+    && canApplyLibraryRequest(requestEpoch, { mutation: libraryContentEpoch, activity: libraryActivityEpoch }, true)
+    && view === syncViewKey()
+    && !hasLocalLibraryActivity()
+  loadingMore.value = true
+  loadMoreError.value = ''
+  try {
+    const timeParams = toClipboardTimeParams(resolveTimeRange(timePreset.value, customTimeRange.value, new Date()))
+    const page = await listClipboardPage({ limit: 50, cursor, query: searchQuery.value,
+      kind: itemKindFilter.value === 'all' ? undefined : itemKindFilter.value,
+      favoriteOnly: favoritesOnly.value, ...timeParams })
+    if (!canApply()) return
+    items.value = reconcileItems(items.value, uniqueLibraryItems([...items.value, ...page.items]))
+    loadedBoundary = oldestLibraryBoundary(items.value, loadedBoundary)
+    nextLibraryCursor = page.nextCursor
+    hasMore.value = page.hasMore
+    rememberLibrary()
+  } catch (err) {
+    if (canApply()) loadMoreError.value = errorMessage(err, '加载更多失败，请重试。')
+  } finally {
+    if (isCurrentSession(generation) && sequence === listRequestSequence) {
+      loadingMore.value = false
+      if (refreshLibraryAfterMore) {
+        refreshLibraryAfterMore = false
+        void loadItems()
+      }
     }
   }
 }
@@ -566,9 +671,10 @@ async function submitClipboard() {
       item = await createClipboard(content, 'web', true)
     }
     if (!isCurrentSession(generation)) return
-    if (hasActiveFilters.value) void loadItems()
-    else items.value = [item, ...items.value]
+    locallyCreatedIds.add(item.id)
+    if (!hasActiveFilters.value) items.value = uniqueLibraryItems([item, ...items.value])
     if (draft.value === content) { draft.value = ''; draftRestored.value = false; composeExpanded.value = false; persistDrafts() }
+    if (hasActiveFilters.value) void loadItems()
     apiStatus.value = 'online'
     notify('内容已保存')
   } catch (err) {
@@ -618,8 +724,9 @@ async function submitFileUpload(file: File, uploadId: string, callbacks: UploadC
       item = await uploadClipboardFile(file, 'web', onProgress, true)
     }
     if (!isCurrentSession(generation)) return
+    locallyCreatedIds.add(item.id)
     if (hasActiveFilters.value) void loadItems()
-    else items.value = [item, ...items.value]
+    else items.value = uniqueLibraryItems([item, ...items.value])
     apiStatus.value = 'online'
     updateUpload(uploadId, { status: 'done', percent: 100, file: undefined })
     notify(`${file.name} 已上传`)
@@ -870,7 +977,14 @@ function syncViewKey() {
   return detailItemId.value ? `detail:${detailItemId.value}` : activeView.value
 }
 
+function hasLocalLibraryActivity() {
+  return Boolean(editItem.value || editSaving.value || composeExpanded.value || tagModalOpen.value || tagSaving.value || shareModalOpen.value || shareCreating.value || passwordFormOpen.value ||
+    pendingTrash.value || pendingPurge.value || deleting.value || trashBusyId.value !== null || favoriteUpdatingId.value !== null || submitting.value || backupImporting.value ||
+    uploadEntries.value.some(entry => entry.status === 'uploading'))
+}
+
 const syncBusy = computed(() => Boolean(
+  loadingMore.value ||
   authLoading.value || loginLoading.value || loading.value || detailLoading.value || sharesLoading.value || trashLoading.value || refreshLoading.value ||
   editItem.value || editSaving.value || composeExpanded.value || tagModalOpen.value || tagSaving.value || shareModalOpen.value || shareCreating.value || passwordFormOpen.value ||
   pendingTrash.value || pendingPurge.value || deleting.value || trashBusyId.value !== null || favoriteUpdatingId.value !== null || submitting.value || backupImporting.value ||
@@ -913,23 +1027,29 @@ function checkForChanges() { void autoSync.check() }
 
 // Reject responses that were started before a local mutation or another fetch completed.
 watch([items, shares, trashItems, detailItem], () => { collectionEpoch++ }, { flush: 'sync' })
+watch(items, () => { libraryContentEpoch++ }, { flush: 'sync' })
+watch([draft, editDraft, noteDraft, tagDraft], () => { libraryActivityEpoch++ }, { flush: 'sync' })
+watch(hasLocalLibraryActivity, busy => { if (busy) libraryActivityEpoch++ }, { flush: 'sync' })
 watch(() => currentUser.value?.id, () => { autoSync.stop() }, { flush: 'sync' })
 watch([currentUser, authLoading, loginLoading], () => {
   if (!publicToken && currentUser.value && !authLoading.value && !loginLoading.value) autoSync.start()
   else autoSync.stop()
 })
 watch(syncViewKey, () => {
+  libraryBaselineReady = false
+  clearSyncNotice()
   autoSync.invalidate()
   checkForChanges()
 })
 watch(syncBusy, (busy) => { if (!busy) checkForChanges() })
 
 function formatDateTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
-function formatHistoryItemTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) }
 function handleKeydown(event: KeyboardEvent) { if (!event.isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
 
 watch([searchQuery, itemKindFilter, favoritesOnly, timePreset, customTimeRange], () => {
   if (restoringWorkspace || !currentUser.value) return
+  resetLibraryPagination()
+  libraryScrollY = 0
   rememberLibrary()
   if (searchTimer) window.clearTimeout(searchTimer)
   listRequestSequence++
@@ -942,6 +1062,8 @@ watch([searchQuery, itemKindFilter, favoritesOnly, timePreset, customTimeRange],
 watch(currentUser, (user, previous) => {
   if (user?.id === previous?.id) return
   sessionGeneration++
+  locallyCreatedIds.clear()
+  resetLibraryPagination()
   if (feedbackTimer) clearTimeout(feedbackTimer)
   if (searchTimer) clearTimeout(searchTimer)
   submitting.value = false
@@ -1002,6 +1124,7 @@ watch(currentUser, (user, previous) => {
   timePreset.value = state?.preset ?? 'all'
   customTimeRange.value = state?.range ?? null
   libraryScrollY = state?.scrollY ?? 0
+  loadedBoundary = state?.loadedBoundary ?? null
   restoringWorkspace = false
 }, { flush: 'sync' })
 
@@ -1009,6 +1132,70 @@ watch([draft, editDraft], () => {
   if (draftTimer) clearTimeout(draftTimer)
   draftTimer = setTimeout(persistDrafts, 300)
 })
+
+const composerOpen = ref(false)
+const moreFiltersOpen = ref(false)
+const attachmentInput = ref<HTMLInputElement | null>(null)
+const displayMode = ref<DisplayMode>('preview')
+watch(() => currentUser.value?.id, (userID) => {
+  const local = storage('localStorage')
+  displayMode.value = userID && local ? readDisplayMode(local, userID) : 'preview'
+  composerOpen.value = false
+  moreFiltersOpen.value = false
+}, { flush: 'sync' })
+async function setDisplayMode(mode: DisplayMode) {
+  if (displayMode.value === mode) return
+  const root = historyResultsElement.value
+  const anchors = root ? captureHistoryAnchors(root) : []
+  displayMode.value = mode
+  const local = storage('localStorage')
+  if (local && currentUser.value) writeDisplayMode(local, currentUser.value.id, mode)
+  await nextTick()
+  if (root && !isDetailPage.value && activeView.value === 'clipboard') restoreHistoryAnchor(root, anchors)
+}
+function chooseAttachments() { attachmentInput.value?.click() }
+function attachSelectedFiles(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  const batch = Date.now()
+  files.forEach((file, index) => { void submitFileUpload(file, `selected-${batch}-${index}`) })
+  input.value = ''
+}
+const activeFilterChips = computed(() => {
+  const chips: { key: string; label: string }[] = []
+  if (searchQuery.value.trim()) chips.push({ key: 'query', label: `搜索：${searchQuery.value.trim()}` })
+  if (itemKindFilter.value !== 'all') chips.push({ key: 'kind', label: itemKindOptions.find(option => option.value === itemKindFilter.value)?.label ?? '' })
+  if (favoritesOnly.value) chips.push({ key: 'favorite', label: '仅收藏' })
+  if (timePreset.value !== 'all') {
+    const date = (value: number) => new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(new Date(value))
+    const label = timePreset.value === 'custom' && customTimeRange.value
+      ? `${date(customTimeRange.value[0])} — ${date(customTimeRange.value[1])}`
+      : timePresetOptions.find(option => option.value === timePreset.value)?.label ?? '自定义时间'
+    chips.push({ key: 'time', label })
+  }
+  return chips
+})
+function removeFilterChip(key: string) {
+  if (key === 'query') searchQuery.value = ''
+  if (key === 'kind') itemKindFilter.value = 'all'
+  if (key === 'favorite') favoritesOnly.value = false
+  if (key === 'time') selectTimePreset('all')
+}
+function localDateValue(timestamp?: number) {
+  if (timestamp === undefined) return ''
+  const date = new Date(timestamp)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+function setMobileRangeDate(part: 0 | 1, event: Event) {
+  const value = (event.target as HTMLInputElement).value
+  if (!value) { handleCustomTimeRangeChange(null); return }
+  const date = new Date(`${value}T00:00:00`).getTime()
+  if (!Number.isFinite(date)) return
+  const range: [number, number] = customTimeRange.value ? [...customTimeRange.value] : [date, date]
+  range[part] = date
+  if (range[0] > range[1]) range[part === 0 ? 1 : 0] = date
+  handleCustomTimeRangeChange(range)
+}
 
 onMounted(() => {
   if (!publicToken) {
@@ -1025,6 +1212,7 @@ onMounted(() => {
   }
 })
 onUnmounted(() => {
+  clearSyncNotice()
   autoSync.stop()
   onPageHidden()
   document.removeEventListener('paste', handlePaste)
@@ -1065,7 +1253,7 @@ onUnmounted(() => {
   </main>
   <n-layout v-else class="app-shell">
     <n-layout-header bordered class="app-header">
-      <div><div class="brand">随渡 <span>SUIDU</span></div><div class="subtitle">把文字放在随手可取的地方</div></div>
+      <div class="workspace-brand"><span class="brand">随渡</span><template v-if="!isDetailPage && activeView === 'clipboard'"><span class="brand-divider">/</span><h1 class="header-page-title">内容库</h1></template></div>
       <div class="header-actions">
         <n-button v-if="!isDetailPage && activeView !== 'clipboard'" secondary @click="changeView('clipboard')"><template #icon><ArrowLeft :size="16" /></template>内容库</n-button>
         <span class="connection-status" :class="apiStatus" :title="apiStatus === 'online' ? '已连接' : apiStatus === 'offline' ? '连接中断，可重试' : '连接中'">{{ currentUser.username }}</span>
@@ -1132,28 +1320,20 @@ onUnmounted(() => {
         </main>
         <TrashPage v-else-if="activeView === 'trash'" :items="trashItems" :loading="trashLoading" :busy-id="trashBusyId" :error="trashError" @restore="(item) => restoreItem(item.id)" @purge="(item) => pendingPurge = item" @refresh="() => loadTrash()" />
         <main v-show="!isDetailPage && activeView === 'clipboard'" class="clipboard-page">
-          <section class="page-intro"><div><p class="eyebrow">CONTENT LIBRARY</p><h1>内容库</h1><p class="intro-copy">在设备之间保存、整理和传递内容。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条{{ hasActiveFilters ? '匹配' : '记录' }}
-          </n-tag></section>
-          <n-card class="composer-card" :bordered="false">
-            <div class="composer-heading"><h2 class="composer-title">添加内容</h2><n-button quaternary @click="composeExpanded = true"><template #icon><Maximize2 :size="16" /></template>展开编辑</n-button></div>
-            <textarea v-model="draft" class="content-editor" aria-label="添加内容" :aria-invalid="draftTooLarge" aria-describedby="draft-editor-status" placeholder="输入或粘贴要传递的文字..." rows="5" @keydown.stop="handleKeydown" />
-            <div id="draft-editor-status" class="editor-status"><span class="editor-hint">{{ draftStorageFailed ? '草稿暂时无法保存到此设备，请勿关闭页面' : draftRestored ? '已恢复上次草稿 · 自动保存在此设备' : '草稿自动保存在此设备' }}</span><span class="editor-hint">{{ draftStats.characters.toLocaleString() }} 字符 · {{ formatTextBytes(draftStats.bytes) }} / 1 MiB</span></div>
+          <input ref="attachmentInput" type="file" multiple class="attachment-picker" aria-label="选择图片或文件" @change="attachSelectedFiles" />
+          <n-card class="composer-card desktop-composer" :class="{ 'is-expanded': composerOpen }" :bordered="false">
+            <div v-if="composerOpen" class="composer-heading"><h2 class="composer-title">添加内容</h2><n-space :size="2"><n-button quaternary aria-label="全屏添加内容" @click="composeExpanded = true"><template #icon><Maximize2 :size="16" /></template></n-button><n-button quaternary @click="composerOpen = false"><template #icon><ChevronUp :size="16" /></template>收起</n-button></n-space></div>
+            <textarea v-model="draft" class="content-editor" aria-label="添加内容" :aria-invalid="draftTooLarge" aria-describedby="draft-editor-status" placeholder="输入或粘贴内容…" :rows="composerOpen ? 5 : 2" @focus="composerOpen = true" @keydown.stop="handleKeydown" />
+            <div v-show="composerOpen || draftTooLarge || draftStorageFailed" id="draft-editor-status" class="editor-status"><span class="editor-hint">{{ draftStorageFailed ? '草稿暂时无法保存到此设备，请勿关闭页面' : draftRestored ? '已恢复上次草稿 · 自动保存在此设备' : '草稿自动保存在此设备' }}</span><span class="editor-hint">{{ draftStats.characters.toLocaleString() }} 字符 · {{ formatTextBytes(draftStats.bytes) }} / 1 MiB</span></div>
             <n-alert v-if="draftTooLarge" type="warning" class="form-alert">{{ textLimitMessage }}</n-alert>
-            <div class="composer-actions"><n-popconfirm v-if="draft" @positive-click="discardComposer"><template #trigger><n-button quaternary>清空草稿</n-button></template>确认清空此设备上的这份草稿？</n-popconfirm><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div>
+            <div class="composer-actions"><n-button quaternary @click="chooseAttachments"><template #icon><UploadCloud :size="17" /></template>图片 / 文件</n-button><n-popconfirm v-if="draft && composerOpen" @positive-click="discardComposer"><template #trigger><n-button quaternary>清空草稿</n-button></template>确认清空此设备上的这份草稿？</n-popconfirm><n-button v-if="composerOpen" quaternary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div>
           </n-card>
-          <n-card class="upload-card" :bordered="false">
+          <n-card v-show="composerOpen" class="upload-card desktop-composer" :bordered="false">
             <n-upload multiple :show-file-list="false" :custom-request="uploadFile">
               <n-upload-dragger><div class="upload-drop-content"><div class="upload-icon"><UploadCloud :size="22" /></div><div><strong>上传图片或文件</strong><span>点击、拖入，或直接 Ctrl+V / ⌘V 粘贴截图，单个不超过 100 MiB</span></div></div></n-upload-dragger>
             </n-upload>
-            <div v-if="uploadEntries.length" class="upload-queue" aria-label="上传记录">
-              <div v-for="entry in uploadEntries" :key="entry.id" class="upload-entry">
-                <div class="upload-entry-heading"><strong>{{ entry.name }}</strong><span>{{ entry.status === 'done' ? '已上传' : entry.status === 'failed' ? '上传失败' : entry.status === 'skipped' ? '已取消重复上传' : entry.percent === 100 ? '正在保存…' : `${entry.percent}%` }}</span></div>
-                <n-progress v-if="entry.status === 'uploading'" type="line" :percentage="entry.percent" :show-indicator="false" />
-                <p v-if="entry.error" role="alert">{{ entry.error }}</p>
-                <div v-if="entry.status !== 'uploading'" class="upload-entry-actions"><n-button v-if="entry.status === 'failed' && entry.file && entry.file.size <= 100 * 1024 * 1024" size="small" @click="retryUpload(entry)">重试上传</n-button><n-button quaternary size="small" @click="uploadEntries = uploadEntries.filter(current => current.id !== entry.id)">关闭</n-button></div>
-              </div>
-            </div>
           </n-card>
+          <UploadQueue :entries="uploadEntries" @retry="retryUpload" @dismiss="(id) => uploadEntries = uploadEntries.filter(entry => entry.id !== id)" />
           <n-alert v-if="uploadError" type="error" closable class="error-alert" @close="uploadError = ''">{{ uploadError }}
           </n-alert>
           <n-alert v-if="error" type="error" closable class="error-alert" @close="error = ''">{{ error }}
@@ -1161,33 +1341,28 @@ onUnmounted(() => {
           <section class="history-section" :class="{ 'is-loading': loading }" :aria-busy="loading">
             <div class="history-progress-rail" aria-hidden="true"><span /></div>
             <div class="section-heading">
-              <div><p class="eyebrow">CONTENT TIMELINE</p><h2>内容时间线</h2></div>
-              <div class="history-heading-status"><n-text depth="3">{{ hasActiveFilters ? `找到 ${items.length} 条` : '按时间倒序' }}</n-text></div>
+              <h2>内容时间线</h2>
+              <div class="history-heading-status"><n-text depth="3">已加载 {{ items.length }} 条</n-text></div>
             </div>
             <div class="history-toolbar">
-              <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" :input-props="{ 'aria-label': '搜索内容记录' }" placeholder="搜索文本、文件名、备注或标签" aria-label="搜索内容记录">
+              <div class="library-search-row"><n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" :input-props="{ 'aria-label': '搜索内容记录' }" placeholder="搜索内容、文件名、备注或标签" aria-label="搜索内容记录">
                 <template #prefix><Search :size="17" /></template>
-              </n-input>
-              <div class="history-filter-scroll" role="group" aria-label="按类型筛选">
+              </n-input><n-button type="primary" class="mobile-add-button" aria-label="添加内容" @click="composeExpanded = true"><template #icon><Plus :size="17" /></template>添加</n-button></div>
+              <div class="library-filter-row"><n-select v-model:value="itemKindFilter" class="mobile-kind-filter" :options="itemKindOptions" aria-label="按类型筛选" /><div class="history-filter-scroll" role="group" aria-label="按类型筛选">
                 <n-button-group class="history-filter-group">
                   <n-button v-for="option in itemKindOptions" :key="option.value" :type="itemKindFilter === option.value ? 'primary' : 'default'" :secondary="itemKindFilter === option.value" @click="itemKindFilter = option.value">
                     {{ option.label }}
                   </n-button>
                 </n-button-group>
               </div>
-              <div class="history-filter-scroll" role="group" aria-label="按时间筛选">
-                <n-button-group class="history-filter-group">
-                  <n-button v-for="option in timePresetOptions" :key="option.value" :type="timePreset === option.value ? 'primary' : 'default'" :secondary="timePreset === option.value" @click="selectTimePreset(option.value)">
-                    {{ option.label }}
-                  </n-button>
-                </n-button-group>
-              </div>
-              <n-date-picker :value="customTimeRange" class="history-date-range" type="daterange" clearable format="yyyy-MM-dd" start-placeholder="开始日期" end-placeholder="结束日期" @update:value="handleCustomTimeRangeChange" />
-              <n-button class="favorites-filter" :type="favoritesOnly ? 'warning' : 'default'" :secondary="favoritesOnly" @click="toggleFavoritesFilter">
+              <n-button class="favorites-filter" aria-label="收藏" title="只看收藏" :aria-pressed="favoritesOnly" :type="favoritesOnly ? 'warning' : 'default'" :secondary="favoritesOnly" @click="toggleFavoritesFilter">
                 <template #icon><Star :size="16" :fill="favoritesOnly ? 'currentColor' : 'none'" /></template>收藏
               </n-button>
-              <n-button v-if="hasActiveFilters" quaternary class="history-reset-filters" @click="clearFilters">清除筛选
-              </n-button>
+              <n-button quaternary class="more-filters-button" :type="timePreset !== 'all' ? 'primary' : 'default'" aria-label="更多筛选" @click="moreFiltersOpen = true"><template #icon><SlidersHorizontal :size="16" /></template><span>更多筛选</span></n-button>
+              <n-button-group class="display-mode-switch" aria-label="显示模式"><n-button :secondary="displayMode === 'preview'" :type="displayMode === 'preview' ? 'primary' : 'default'" :aria-pressed="displayMode === 'preview'" aria-label="预览模式" title="预览模式" @click="setDisplayMode('preview')"><template #icon><ClipboardList :size="16" /></template><span>预览</span></n-button><n-button :secondary="displayMode === 'compact'" :type="displayMode === 'compact' ? 'primary' : 'default'" :aria-pressed="displayMode === 'compact'" aria-label="紧凑模式" title="紧凑模式" @click="setDisplayMode('compact')"><template #icon><List :size="16" /></template><span>紧凑</span></n-button></n-button-group>
+              </div>
+              <div v-if="activeFilterChips.length" class="active-filter-chips" aria-label="当前筛选条件"><n-tag v-for="chip in activeFilterChips" :key="chip.key" size="small" closable round :bordered="false" @close="removeFilterChip(chip.key)">{{ chip.label }}</n-tag><n-button text size="small" @click="clearFilters">清除筛选</n-button></div>
+              <div class="sync-update-status" role="status" aria-live="polite"><span v-if="syncAddedCount">新增 {{ syncAddedCount }} 条内容</span></div>
             </div>
             <div ref="historyResultsElement" class="history-results" :style="historyResultsStyle">
               <n-empty v-if="!items.length" :description="loading ? '正在加载记录' : emptyHistoryDescription" class="empty-state" />
@@ -1206,27 +1381,23 @@ onUnmounted(() => {
                     </header>
                     <n-list class="history-group-list" bordered>
                       <n-list-item v-for="item in group.items" :key="item.id">
-                        <div class="history-item" :data-item-id="item.id">
-                          <div class="item-card-header">
-                            <n-space :size="8" align="center"><n-tag size="small" :bordered="false">{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : '文本' }}</n-tag><time :datetime="item.createdAt" :title="formatDateTime(item.createdAt)">{{ formatHistoryItemTime(item.createdAt) }}</time></n-space>
-                            <ItemActions :item="item" :copied="copiedId === item.id" :favorite-updating="favoriteUpdatingId === item.id" @copy="copyItem" @favorite="toggleFavorite" @edit="openEditor" @organize="openTagModal" @share="openShareModal" @trash="requestTrash" />
-                          </div>
-                          <ClipboardItemContent :item="item" preview @view-detail="openDetail(item)" />
-                          <p v-if="item.note" class="item-note">{{ item.note }}</p>
-                          <div v-if="item.tags?.length" class="item-tags" aria-label="记录标签">
-                            <n-tag v-for="tag in item.tags" :key="tag" size="small" round :bordered="false" type="info" class="item-tag" role="button" tabindex="0" @click="searchTag(tag)" @keydown.enter="searchTag(tag)">{{ tag }}</n-tag>
-                          </div>
-
-                        </div>
+                        <ContentLibraryCard :item="item" :mode="displayMode" :copied="copiedId === item.id" :favorite-updating="favoriteUpdatingId === item.id" :highlighted="recentlySyncedIds.has(item.id)" @view-detail="openDetail" @copy="copyItem" @favorite="toggleFavorite" @edit="openEditor" @organize="openTagModal" @share="openShareModal" @trash="requestTrash" @search-tag="searchTag" />
                       </n-list-item>
                     </n-list>
                   </div>
                 </section>
               </div>
             </div>
+            <div class="load-more-footer" aria-live="polite"><p v-if="loadMoreError" role="alert">{{ loadMoreError }}</p><n-button v-if="hasMore" :disabled="loadingMore || loading" :aria-busy="loadingMore" @click="loadMoreItems">{{ loadingMore ? '正在加载…' : loadMoreError ? '重试加载' : '加载更多' }}</n-button><span v-else-if="items.length && !loading">已加载全部</span></div>
           </section>
         </main>
     </n-layout-content>
+    <n-modal v-model:show="moreFiltersOpen" preset="card" title="更多筛选" class="library-filters-modal">
+      <div class="filter-modal-label">创建时间</div><div class="time-preset-grid"><n-button v-for="option in timePresetOptions" :key="option.value" :type="timePreset === option.value ? 'primary' : 'default'" :secondary="timePreset === option.value" @click="selectTimePreset(option.value)">{{ option.label }}</n-button></div>
+      <n-date-picker :value="customTimeRange" class="history-date-range desktop-date-range" type="daterange" clearable format="yyyy-MM-dd" start-placeholder="开始日期" end-placeholder="结束日期" @update:value="handleCustomTimeRangeChange" />
+      <div class="mobile-date-range"><label>开始日期<input type="date" aria-label="开始日期" :value="localDateValue(customTimeRange?.[0])" @change="setMobileRangeDate(0, $event)" /></label><label>结束日期<input type="date" aria-label="结束日期" :value="localDateValue(customTimeRange?.[1])" :min="localDateValue(customTimeRange?.[0])" @change="setMobileRangeDate(1, $event)" /></label></div>
+      <n-space justify="end" class="tag-modal-actions"><n-button quaternary @click="selectTimePreset('all')">重置时间</n-button><n-button type="primary" @click="moreFiltersOpen = false">完成</n-button></n-space>
+    </n-modal>
     <n-modal v-model:show="shareModalOpen" preset="card" title="公开分享" class="share-modal">
       <template v-if="createdShare">
         <n-alert type="success">分享链接已创建。</n-alert>
@@ -1242,10 +1413,12 @@ onUnmounted(() => {
       </template>
     </n-modal>
     <n-modal v-model:show="composeExpanded" preset="card" title="添加内容" class="workspace-editor-modal compose-expanded-modal" :mask-closable="false">
+      <div class="mobile-compose-tools"><n-button secondary @click="chooseAttachments"><template #icon><UploadCloud :size="17" /></template>图片 / 文件</n-button><n-button quaternary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button></div>
       <textarea v-model="draft" class="content-editor" aria-label="展开添加内容" :aria-invalid="draftTooLarge" rows="18" @keydown.stop="handleKeydown" />
       <div class="editor-status"><span class="editor-hint">{{ draftStorageFailed ? '草稿暂时无法保存，请勿关闭页面' : '草稿自动保存在此设备' }}</span><span class="editor-hint">{{ draftStats.characters.toLocaleString() }} 字符 · {{ formatTextBytes(draftStats.bytes) }} / 1 MiB</span></div>
       <n-alert v-if="draftTooLarge" type="warning" class="form-alert">{{ textLimitMessage }}</n-alert>
       <n-alert v-if="error" type="error" class="form-alert">{{ error }}</n-alert>
+      <UploadQueue :entries="uploadEntries" @retry="retryUpload" @dismiss="(id) => uploadEntries = uploadEntries.filter(entry => entry.id !== id)" />
       <n-space justify="end" class="tag-modal-actions"><n-button @click="composeExpanded = false">收起</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard">提交文本</n-button></n-space>
     </n-modal>
     <n-modal :show="Boolean(editItem)" preset="card" title="编辑内容" class="edit-content-modal workspace-editor-modal" :class="{ 'is-fullscreen': editExpanded }" :mask-closable="false" :close-on-esc="!editSaving" :closable="!editSaving" @update:show="(show: boolean) => { if (!show) closeEditor() }">
@@ -1274,7 +1447,7 @@ onUnmounted(() => {
       <n-space justify="end" class="tag-modal-actions"><n-button :disabled="tagSaving" @click="tagModalOpen = false">取消</n-button><n-button type="primary" :loading="tagSaving" @click="saveTags">保存</n-button></n-space>
     </n-modal>
   </n-layout>
-  <div v-if="feedback && currentUser" class="operation-feedback" :class="feedback.kind" :role="feedback.kind === 'error' ? 'alert' : 'status'">
+  <div v-if="feedback && currentUser && !composeExpanded && !editItem" class="operation-feedback" :class="feedback.kind" :role="feedback.kind === 'error' ? 'alert' : 'status'">
     <span>{{ feedback.text }}</span><button v-if="feedback.undoId" type="button" :disabled="trashBusyId !== null" @click="restoreItem(feedback.undoId)">撤销</button><button type="button" aria-label="关闭提示" @click="feedback = null">×</button>
   </div>
 </template>

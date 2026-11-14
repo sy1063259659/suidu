@@ -297,3 +297,86 @@ h2 { font-size: 21px; }
   .view-full-content { transition: none; }
   .history-section.is-loading .history-progress-rail span { animation: none; transform: translateX(0); }
 }
+
+/* The library keeps creation compact and browsing controls within reach. */
+.app-header { padding-top: 14px; padding-bottom: 14px; }
+.workspace-brand { display: flex; align-items: center; gap: 12px; min-width: 0; white-space: nowrap; }
+.workspace-brand .brand { font-size: 22px; }
+.brand-divider { color: #c8d2df; font-weight: 400; }
+.header-page-title { font-size: 17px; font-weight: 550; }
+.app-content { padding-top: 24px; }
+.attachment-picker { display: none; }
+.desktop-composer.composer-card > .n-card-content { padding: 16px 18px; }
+.desktop-composer .content-editor { min-height: 72px; resize: none; }
+.desktop-composer.is-expanded .content-editor { min-height: 150px; resize: vertical; }
+.desktop-composer .composer-actions { align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.desktop-composer .composer-actions > .n-button:first-child { margin-right: auto; }
+.desktop-composer .composer-title { font-size: 16px; }
+.desktop-composer.upload-card { margin-top: 10px; }
+.desktop-composer.upload-card > .n-card-content { padding: 10px; }
+.desktop-composer .n-upload-dragger { padding: 12px 16px; }
+.library-upload-queue { padding: 12px 16px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.library-upload-queue .upload-entry:first-child { border: 0; padding-top: 0; }
+.clipboard-page .history-section { margin-top: 26px; }
+.clipboard-page .section-heading { margin-bottom: 14px; }
+.clipboard-page .section-heading h2 { font-size: 17px; }
+.history-toolbar { position: sticky; top: 0; z-index: 30; display: grid; gap: 10px; padding: 12px; border: 1px solid #dfe7f1; border-radius: 12px; background: #f9fbfe; box-shadow: 0 5px 18px #24324708; }
+.library-search-row { display: flex; gap: 8px; min-width: 0; align-items: center; }
+.library-search-row .history-search { flex: 1; min-width: 0; width: auto; }
+.library-filter-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.library-filter-row .history-filter-scroll { width: auto; }
+.display-mode-switch { margin-left: auto; flex-shrink: 0; }
+.mobile-add-button.n-button, .mobile-kind-filter { display: none; }
+.active-filter-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.active-filter-chips .n-tag { max-width: 100%; }
+.active-filter-chips .n-tag__content { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sync-update-status { min-height: 17px; line-height: 17px; color: #2d6cdf; font-size: 12px; text-align: right; }
+.load-more-footer { display: flex; min-height: 72px; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #78869a; font-size: 13px; }
+.load-more-footer p { margin: 4px 0 0; color: #a13046; }
+.load-more-footer .n-button { min-width: 140px; min-height: 40px; }
+.library-filters-modal { width: min(92vw, 460px); }
+.filter-modal-label { color: #64748b; font-size: 13px; margin-bottom: 12px; }
+.time-preset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
+.library-filters-modal .history-date-range { width: 100%; }
+.mobile-date-range { display: none; }
+.mobile-compose-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.compose-expanded-modal .library-upload-queue { flex-shrink: 0; max-height: 130px; overflow-y: auto; }
+.compose-expanded-modal > .n-card-content { overflow-y: auto; overscroll-behavior: contain; }
+@media (max-width: 640px) {
+  .app-header.n-layout-header { padding: 10px 12px; gap: 8px; }
+  .workspace-brand { gap: 7px; }
+  .workspace-brand .brand { font-size: 19px; }
+  .header-page-title { font-size: 15px; }
+  .header-actions { gap: 2px; flex-wrap: nowrap; }
+  .header-actions .connection-status { max-width: 46px; font-size: 12px; }
+  .header-actions .n-button { padding-left: 9px; padding-right: 9px; }
+  .app-content { padding: 8px 12px 48px; }
+  .desktop-composer { display: none !important; }
+  .clipboard-page .history-section { margin-top: 4px; }
+  .clipboard-page .section-heading { margin-bottom: 10px; }
+  .clipboard-page .section-heading h2 { font-size: 14px; font-weight: 550; color: #64748b; }
+  .history-heading-status { font-size: 12px; }
+  .history-toolbar { top: env(safe-area-inset-top, 0px); gap: 8px; padding: 10px; border-radius: 10px; }
+  .mobile-add-button.n-button { display: inline-flex; min-height: 44px; padding: 0 12px; }
+  .mobile-kind-filter { display: block; flex: 1; min-width: 72px; }
+  .mobile-kind-filter .n-base-selection { min-height: 44px; }
+  .mobile-kind-filter .n-base-selection-label { min-height: 42px; }
+  .library-search-row .n-input { min-height: 44px; }
+  .library-search-row .n-input-wrapper { align-items: center; }
+  .library-filter-row { gap: 6px; }
+  .library-filter-row .history-filter-scroll { display: none; }
+  .library-filter-row > .n-button { min-width: 40px; min-height: 44px; padding: 0 10px; }
+  .favorites-filter .n-button__content, .more-filters-button .n-button__content, .display-mode-switch .n-button__content { display: none; }
+  .favorites-filter .n-button__icon, .more-filters-button .n-button__icon, .display-mode-switch .n-button__icon { margin-right: 0; }
+  .display-mode-switch { margin-left: 0; }
+  .display-mode-switch .n-button { min-width: 36px; min-height: 44px; padding: 0 8px; }
+  .active-filter-chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 3px; }
+  .active-filter-chips > * { flex-shrink: 0; }
+  .active-filter-chips .n-tag { max-width: 190px; }
+  .sync-update-status { min-height: 15px; line-height: 15px; }
+  .library-upload-queue { margin-top: 8px; padding: 12px; }
+  .desktop-date-range { display: none; }
+  .mobile-date-range { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .mobile-date-range label { display: grid; min-width: 0; gap: 6px; color: #64748b; font-size: 12px; }
+  .mobile-date-range input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 6px; border: 1px solid #d8e2f0; border-radius: 6px; background: #fff; font: inherit; font-size: 14px; color: #25344b; }
+}

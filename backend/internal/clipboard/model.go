@@ -66,6 +66,13 @@ type ListFilter struct {
 	FavoriteOnly  bool
 	CreatedFrom   *time.Time
 	CreatedBefore *time.Time
+	Cursor        *ListCursor
+}
+
+// ListCursor is an exclusive bound in the descending (created_at, id) order.
+type ListCursor struct {
+	CreatedAt time.Time
+	ID        int64
 }
 
 type ItemMetadata struct {

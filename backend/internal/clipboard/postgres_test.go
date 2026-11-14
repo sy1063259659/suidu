@@ -128,7 +128,7 @@ func TestBuildListItemsQueryIncludesCreatedAtBounds(t *testing.T) {
 		t.Fatalf("query missing limit position: %s", query)
 	}
 
-	wantArgs := []any{int64(42), KindImage, true, "alpha", from, to, 25}
+	wantArgs := []any{int64(42), KindImage, true, "alpha", from, to, 25, nil, nil}
 	if !reflect.DeepEqual(args, wantArgs) {
 		t.Fatalf("args = %#v, want %#v", args, wantArgs)
 	}
@@ -140,11 +140,29 @@ func TestBuildListItemsQueryLeavesOptionalBoundsNil(t *testing.T) {
 	if !strings.Contains(query, "($5::timestamptz IS NULL OR created_at >= $5)") || !strings.Contains(query, "($6::timestamptz IS NULL OR created_at < $6)") {
 		t.Fatalf("query missing optional bound predicates: %s", query)
 	}
-	if len(args) != 7 {
-		t.Fatalf("args length = %d, want 7", len(args))
+	if len(args) != 9 {
+		t.Fatalf("args length = %d, want 9", len(args))
 	}
-	if args[4] != nil || args[5] != nil {
+	if args[4] != nil || args[5] != nil || args[7] != nil || args[8] != nil {
 		t.Fatalf("expected nil optional bounds, got %#v", args)
+	}
+}
+
+func TestBuildListItemsQueryUsesExclusiveCursorTuple(t *testing.T) {
+	createdAt := time.Date(2026, 11, 14, 10, 30, 0, 123456000, time.UTC)
+	query, args := buildListItemsQuery(42, ListFilter{Cursor: &ListCursor{CreatedAt: createdAt, ID: 71}})
+	for _, clause := range []string{
+		"WHERE user_id = $1 AND deleted_at IS NULL",
+		"($8::timestamptz IS NULL OR (created_at, id) < ($8, $9::bigint))",
+		"ORDER BY created_at DESC, id DESC",
+		"LIMIT NULLIF($7, 0)",
+	} {
+		if !strings.Contains(query, clause) {
+			t.Fatalf("query missing %q: %s", clause, query)
+		}
+	}
+	if args[6] != 0 || args[7] != createdAt || args[8] != int64(71) {
+		t.Fatalf("cursor query must retain unlimited backup limit and exact cursor: %#v", args)
 	}
 }
 
