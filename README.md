@@ -61,6 +61,10 @@ Clipboard history can be searched case-insensitively by text content or file nam
 
 History previews collapse only when their rendered height exceeds 220 px. Their protected `/items/:id` detail page shows complete content, with sticky copy/edit controls, code line numbers, horizontal scrolling, and optional code wrapping. Returning to the library preserves the filters and scroll position; these settings also survive a reload in the same browser tab.
 
+The search toolbar stays visible while browsing. Time filters live under “更多筛选”; active conditions can be removed individually. Preview and compact modes share the same actions, and each user's display preference is stored on the current device. A note's first nonempty line becomes its card title, with remaining note text shown below; records without notes use their first content line or filename.
+
+The library initially loads 50 records and offers “加载更多” for older records. Counts describe loaded records, rather than the entire library. `GET /api/clipboard` accepts an optional opaque `cursor` and returns `items`, `nextCursor`, and `hasMore`; cursors retain timestamp precision and use IDs to order equal timestamps. Existing filters apply across every page. Returning from details or reloading the same tab restores the loaded range before its reading position.
+
 Text presentation recognizes fenced code, JSON, Markdown, standalone web links, and common Go, TypeScript/JavaScript, Python, SQL, YAML, Java, Shell, HTML, and CSS snippets. Code receives language-aware highlighting, Markdown is rendered with raw HTML disabled, and ordinary text keeps its original whitespace.
 
 ### Editing and drafts
@@ -69,9 +73,13 @@ New text and unfinished edits are automatically saved on the current device, sep
 
 Enter inserts a newline; Ctrl/Command+Enter submits or saves. Mobile editors open full screen, and the composer also offers expanded editing. Text is never silently truncated in the input; the editor shows a character/UTF-8 size count and warns when text exceeds the 1 MiB save limit. Split oversized text or upload it as a file.
 
+On desktop, the composer starts at two lines and expands on focus. On mobile, “添加内容” opens the full-screen editor with text and attachment actions. Collapsing either editor retains its draft. Upload progress and retries remain accessible when the composer is collapsed.
+
 ### Cross-device updates
 
 Open pages check the signed-in user's change version every five seconds and silently refresh the active library, detail, share, or recycle-bin view only when needed. Saved content, attachments, edits, favorites, notes, tags, and deletion/restoration changes appear across devices without reloading the page. Draft input, filters, and the library reading position are retained.
+
+Background refresh preserves the entire expanded library range, including when its oldest record was deleted. Remote arrivals briefly display a count and highlight for three seconds; initial loading, filter changes, pagination, and local submissions do not trigger this notice. Reduced-motion preferences disable the highlight animation.
 
 Checks pause while the page is hidden, offline, editing in a dialog, uploading, or processing a local change. Returning to the page, reconnecting, or closing an editor checks again. Temporary failures retain the current content and retry with a backoff of up to 30 seconds. `GET /api/changes` requires authentication and returns only the current user's version, with caching disabled.
 

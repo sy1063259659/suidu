@@ -1,4 +1,5 @@
 import type { DateRangeValue, TimeFilterPreset } from './timeline'
+import { isLibraryBoundary, type LibraryBoundary } from './libraryPagination'
 
 export interface LibraryState {
   query: string
@@ -7,6 +8,7 @@ export interface LibraryState {
   preset: TimeFilterPreset
   range: DateRangeValue
   scrollY: number
+  loadedBoundary?: LibraryBoundary | null
 }
 
 function storageKey(userID: number): string | null {
@@ -35,6 +37,7 @@ function isLibraryState(value: unknown): value is LibraryState {
     && isDateRange(value.range)
     && (value.preset !== 'custom' || value.range !== null)
     && typeof value.scrollY === 'number' && Number.isFinite(value.scrollY) && value.scrollY >= 0
+    && (value.loadedBoundary === undefined || value.loadedBoundary === null || isLibraryBoundary(value.loadedBoundary))
 }
 
 /** Restore only a valid state belonging to this user from the supplied session storage. */

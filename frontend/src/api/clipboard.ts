@@ -20,6 +20,7 @@ export interface ClipboardItem {
 
 export interface ListClipboardOptions {
   limit?: number
+  cursor?: string
   query?: string
   kind?: ClipboardItemKind
   favoriteOnly?: boolean
@@ -35,11 +36,18 @@ export async function getChangesVersion(): Promise<string> {
   return data.version
 }
 
-export async function listClipboard(options: ListClipboardOptions = {}): Promise<ClipboardItem[]> {
-  const { data } = await api.get<{ items: ClipboardItem[] }>('/clipboard', {
+export interface ClipboardPage {
+  items: ClipboardItem[]
+  nextCursor: string
+  hasMore: boolean
+}
+
+export async function listClipboardPage(options: ListClipboardOptions = {}): Promise<ClipboardPage> {
+  const { data } = await api.get<ClipboardPage>('/clipboard', {
     timeout: 15000,
     params: {
       limit: options.limit ?? 50,
+      cursor: options.cursor || undefined,
       q: options.query?.trim() || undefined,
       kind: options.kind,
       favorite: options.favoriteOnly ? true : undefined,
@@ -47,7 +55,11 @@ export async function listClipboard(options: ListClipboardOptions = {}): Promise
       to: options.createdBefore,
     },
   })
-  return data.items
+  return data
+}
+
+export async function listClipboard(options: ListClipboardOptions = {}): Promise<ClipboardItem[]> {
+  return (await listClipboardPage(options)).items
 }
 
 export async function getClipboard(id: number): Promise<ClipboardItem> {

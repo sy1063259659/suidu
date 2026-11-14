@@ -158,6 +158,9 @@ func (r *MemoryRepository) List(_ context.Context, userID int64, filter ListFilt
 		if filter.CreatedBefore != nil && !item.CreatedAt.Before(*filter.CreatedBefore) {
 			continue
 		}
+		if cursor := filter.Cursor; cursor != nil && (item.CreatedAt.After(cursor.CreatedAt) || (item.CreatedAt.Equal(cursor.CreatedAt) && item.ID >= cursor.ID)) {
+			continue
+		}
 		if query != "" && !strings.Contains(strings.ToLower(item.Content), query) && !strings.Contains(strings.ToLower(item.FileName), query) && !strings.Contains(strings.ToLower(item.Note), query) && !strings.Contains(strings.ToLower(strings.Join(item.Tags, " ")), query) {
 			continue
 		}

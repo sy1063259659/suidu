@@ -149,20 +149,36 @@ func (h *Handler) list(c *gin.Context) {
 	if !ok {
 		return
 	}
+	var cursor *ListCursor
+	if raw := c.Query("cursor"); raw != "" {
+		var err error
+		cursor, err = decodeListCursor(raw)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "cursor must be a valid clipboard page cursor")
+			return
+		}
+	}
 
 	items, err := h.repo.List(c.Request.Context(), user.ID, ListFilter{
-		Limit:         limit,
+		Limit:         limit + 1,
 		Query:         query,
 		Kind:          kind,
 		FavoriteOnly:  favoriteOnly,
 		CreatedFrom:   createdFrom,
 		CreatedBefore: createdBefore,
+		Cursor:        cursor,
 	})
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, "failed to list clipboard items")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
+	hasMore := len(items) > limit
+	nextCursor := ""
+	if hasMore {
+		items = items[:limit]
+		nextCursor = encodeListCursor(items[len(items)-1])
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "nextCursor": nextCursor, "hasMore": hasMore})
 }
 
 type metadataRequest struct {

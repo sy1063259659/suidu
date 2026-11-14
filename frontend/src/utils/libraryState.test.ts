@@ -18,6 +18,18 @@ function libraryState(overrides: Partial<LibraryState> = {}): LibraryState {
 }
 
 describe('per-user library session state', () => {
+  it('restores an exact loaded boundary with nanoseconds alongside scroll state', () => {
+    const storage = memoryStorage()
+    const state = libraryState({ loadedBoundary: { id: 150, createdAt: '2026-11-14T12:00:00.123456789Z' } })
+    expect(writeLibraryState(storage, 1, state)).toBe(true)
+    expect(readLibraryState(storage, 1)).toEqual(state)
+  })
+
+  it.each([{ id: 0, createdAt: '2026-11-14T12:00:00Z' }, { id: 1, createdAt: 'broken' }, 'bad'])('rejects an invalid loaded boundary %o', (loadedBoundary) => {
+    const storage = memoryStorage()
+    expect(writeLibraryState(storage, 1, libraryState({ loadedBoundary } as Partial<LibraryState>))).toBe(false)
+  })
+
   it('round trips filters and an exact scroll position independently per user', () => {
     const storage = memoryStorage()
     const first = libraryState()
