@@ -46,3 +46,16 @@ describe('ClipboardItemContent image interaction', () => {
     expect(html).not.toContain('<a ')
   })
 })
+
+
+describe('ClipboardItemContent file interaction', () => {
+  it('makes file previews keyboard accessible while keeping detail metadata passive', async () => {
+    const item: ClipboardItem = { ...imageItem, kind: 'file', fileName: 'report.pdf', mediaType: 'application/pdf' }
+    const preview = await renderToString(createSSRApp({ render: () => h(ClipboardItemContent, { item, preview: true }) }))
+    const detail = await renderToString(createSSRApp({ render: () => h(ClipboardItemContent, { item }) }))
+    expect(preview).toContain('aria-label="查看文件详情"')
+    expect(preview).toContain('role="button"')
+    expect(preview).toContain('tabindex="0"')
+    expect(detail).not.toContain('role="button"')
+  })
+})

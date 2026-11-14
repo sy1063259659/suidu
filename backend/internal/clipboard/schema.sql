@@ -16,6 +16,12 @@ ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL 
 ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT '';
 ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS favorite BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE clipboard_items ADD COLUMN IF NOT EXISTS purge_pending BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE INDEX IF NOT EXISTS idx_clipboard_items_user_trash
+    ON clipboard_items (user_id, deleted_at DESC, id DESC)
+    WHERE deleted_at IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_clipboard_items_created_at
     ON clipboard_items (created_at DESC, id DESC);

@@ -50,6 +50,9 @@ func (h *Handler) RegisterRoutes(router gin.IRouter) {
 	router.GET("/clipboard/:id/content", h.content)
 	router.PATCH("/clipboard/:id", h.updateMetadata)
 	router.DELETE("/clipboard/:id", h.delete)
+	router.POST("/clipboard/:id/restore", h.restore)
+	router.GET("/trash", h.listTrash)
+	router.DELETE("/trash/:id", h.purge)
 	router.POST("/clipboard/:id/shares", h.createShare)
 	router.GET("/shares", h.listShares)
 	router.POST("/shares/:id/revoke", h.revokeShare)
@@ -523,25 +526,11 @@ func (h *Handler) delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	item, err := h.repo.Get(c.Request.Context(), user.ID, id)
-	if errors.Is(err, ErrNotFound) {
+	if err := h.repo.Trash(c.Request.Context(), user.ID, id); errors.Is(err, ErrNotFound) {
 		writeError(c, http.StatusNotFound, "clipboard item not found")
 		return
 	} else if err != nil {
-		writeError(c, http.StatusInternalServerError, "failed to load clipboard item")
-		return
-	}
-	if item.StorageKey != "" {
-		if err := h.files.Delete(c.Request.Context(), item.StorageKey); err != nil && !errors.Is(err, filestore.ErrNotFound) {
-			writeError(c, http.StatusInternalServerError, "failed to delete clipboard source file")
-			return
-		}
-	}
-	if err := h.repo.Delete(c.Request.Context(), user.ID, id); errors.Is(err, ErrNotFound) {
-		writeError(c, http.StatusNotFound, "clipboard item not found")
-		return
-	} else if err != nil {
-		writeError(c, http.StatusInternalServerError, "failed to delete clipboard item")
+		writeError(c, http.StatusInternalServerError, "failed to move clipboard item to trash")
 		return
 	}
 	c.Status(http.StatusNoContent)

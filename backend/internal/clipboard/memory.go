@@ -72,7 +72,7 @@ func (r *MemoryRepository) FindDuplicate(_ context.Context, userID int64, kind K
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, item := range r.items {
-		if item.UserID == userID && item.Kind == kind && contentHash != "" && item.ContentHash == contentHash {
+		if item.UserID == userID && item.DeletedAt == nil && item.Kind == kind && contentHash != "" && item.ContentHash == contentHash {
 			return item, nil
 		}
 	}
@@ -119,7 +119,7 @@ func (r *MemoryRepository) Get(_ context.Context, userID, id int64) (Item, error
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	item, ok := r.items[id]
-	if !ok || item.UserID != userID {
+	if !ok || item.UserID != userID || item.DeletedAt != nil {
 		return Item{}, ErrNotFound
 	}
 	return item, nil
@@ -132,7 +132,7 @@ func (r *MemoryRepository) List(_ context.Context, userID int64, filter ListFilt
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
 	items := make([]Item, 0, len(r.items))
 	for _, item := range r.items {
-		if item.UserID != userID {
+		if item.UserID != userID || item.DeletedAt != nil {
 			continue
 		}
 		if filter.Kind != "" && item.Kind != filter.Kind {
@@ -172,7 +172,7 @@ func (r *MemoryRepository) UpdateMetadata(_ context.Context, userID, id int64, m
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	item, ok := r.items[id]
-	if !ok || item.UserID != userID {
+	if !ok || item.UserID != userID || item.DeletedAt != nil {
 		return Item{}, ErrNotFound
 	}
 	item.Tags = normalized.Tags
@@ -212,6 +212,81 @@ func (r *MemoryRepository) Delete(_ context.Context, userID, id int64) error {
 	return nil
 }
 
+func (r *MemoryRepository) Trash(_ context.Context, userID, id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item, ok := r.items[id]
+	if !ok || item.UserID != userID || item.DeletedAt != nil {
+		return ErrNotFound
+	}
+	now := r.now().UTC()
+	item.DeletedAt = &now
+	r.items[id] = item
+	for shareID, share := range r.shares {
+		if share.Item.ID == id && share.RevokedAt == nil {
+			share.RevokedAt = &now
+			r.shares[shareID] = share
+		}
+	}
+	return nil
+}
+
+func (r *MemoryRepository) ListTrash(_ context.Context, userID int64, limit int) ([]Item, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	items := make([]Item, 0)
+	for _, item := range r.items {
+		if item.UserID == userID && item.DeletedAt != nil {
+			items = append(items, item)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].DeletedAt.Equal(*items[j].DeletedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].DeletedAt.After(*items[j].DeletedAt)
+	})
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
+func (r *MemoryRepository) Restore(_ context.Context, userID, id int64) (Item, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item, ok := r.items[id]
+	if !ok || item.UserID != userID || item.DeletedAt == nil || item.PurgePending {
+		return Item{}, ErrNotFound
+	}
+	item.DeletedAt = nil
+	r.items[id] = item
+	return item, nil
+}
+
+func (r *MemoryRepository) Purge(ctx context.Context, userID, id int64, deleteSource func(context.Context, string) error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item, ok := r.items[id]
+	if !ok || item.UserID != userID || item.DeletedAt == nil {
+		return ErrNotFound
+	}
+	item.PurgePending = true
+	r.items[id] = item
+	if item.StorageKey != "" {
+		if err := deleteSource(ctx, item.StorageKey); err != nil {
+			return err
+		}
+	}
+	delete(r.items, id)
+	for shareID, share := range r.shares {
+		if share.Item.ID == id {
+			delete(r.shares, shareID)
+		}
+	}
+	return nil
+}
+
 func (r *MemoryRepository) CreateShare(_ context.Context, userID int64, input CreateShareInput) (Share, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -220,7 +295,7 @@ func (r *MemoryRepository) CreateShare(_ context.Context, userID int64, input Cr
 		return Share{}, err
 	}
 	item, ok := r.items[input.ItemID]
-	if !ok || item.UserID != userID {
+	if !ok || item.UserID != userID || item.DeletedAt != nil {
 		return Share{}, ErrNotFound
 	}
 	for _, existing := range r.shares {
@@ -242,7 +317,7 @@ func (r *MemoryRepository) ListShares(_ context.Context, userID int64, limit int
 	defer r.mu.RUnlock()
 	shares := make([]Share, 0)
 	for _, share := range r.shares {
-		if share.UserID == userID {
+		if share.UserID == userID && r.items[share.Item.ID].DeletedAt == nil {
 			shares = append(shares, share)
 		}
 	}
@@ -266,7 +341,7 @@ func (r *MemoryRepository) GetPublicShare(_ context.Context, token string) (Shar
 		if share.Token != token || share.RevokedAt != nil || !share.ExpiresAt.After(now) {
 			continue
 		}
-		if _, ok := r.items[share.Item.ID]; !ok {
+		if item, ok := r.items[share.Item.ID]; !ok || item.DeletedAt != nil {
 			return Share{}, ErrNotFound
 		}
 		return share, nil

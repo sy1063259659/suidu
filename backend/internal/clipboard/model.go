@@ -31,20 +31,22 @@ const (
 )
 
 type Item struct {
-	ID          int64     `json:"id"`
-	UserID      int64     `json:"-"`
-	Kind        Kind      `json:"kind"`
-	Content     string    `json:"content,omitempty"`
-	FileName    string    `json:"fileName,omitempty"`
-	MediaType   string    `json:"mediaType,omitempty"`
-	SizeBytes   int64     `json:"sizeBytes,omitempty"`
-	StorageKey  string    `json:"-"`
-	ContentHash string    `json:"-"`
-	Note        string    `json:"note,omitempty"`
-	Source      string    `json:"source"`
-	CreatedAt   time.Time `json:"createdAt"`
-	Tags        []string  `json:"tags,omitempty"`
-	Favorite    bool      `json:"favorite,omitempty"`
+	ID           int64      `json:"id"`
+	UserID       int64      `json:"-"`
+	Kind         Kind       `json:"kind"`
+	Content      string     `json:"content,omitempty"`
+	FileName     string     `json:"fileName,omitempty"`
+	MediaType    string     `json:"mediaType,omitempty"`
+	SizeBytes    int64      `json:"sizeBytes,omitempty"`
+	StorageKey   string     `json:"-"`
+	ContentHash  string     `json:"-"`
+	Note         string     `json:"note,omitempty"`
+	Source       string     `json:"source"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	Tags         []string   `json:"tags,omitempty"`
+	Favorite     bool       `json:"favorite,omitempty"`
+	DeletedAt    *time.Time `json:"deletedAt,omitempty"`
+	PurgePending bool       `json:"purgePending,omitempty"`
 }
 
 type Attachment struct {
@@ -89,6 +91,12 @@ type Repository interface {
 	List(ctx context.Context, userID int64, filter ListFilter) ([]Item, error)
 	UpdateMetadata(ctx context.Context, userID, id int64, metadata ItemMetadata) (Item, error)
 	Delete(ctx context.Context, userID, id int64) error
+	Trash(ctx context.Context, userID, id int64) error
+	ListTrash(ctx context.Context, userID int64, limit int) ([]Item, error)
+	Restore(ctx context.Context, userID, id int64) (Item, error)
+	// Purge records permanent deletion intent before source removal. A failed purge
+	// remains pending and retryable, and cannot be restored with a missing source.
+	Purge(ctx context.Context, userID, id int64, deleteSource func(context.Context, string) error) error
 	CreateShare(ctx context.Context, userID int64, input CreateShareInput) (Share, error)
 	ListShares(ctx context.Context, userID int64, limit int) ([]Share, error)
 	GetPublicShare(ctx context.Context, token string) (Share, error)

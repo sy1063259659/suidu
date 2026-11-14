@@ -59,9 +59,15 @@ Clipboard records are isolated by user. Existing records without an owner are as
 
 Clipboard history can be searched case-insensitively by text content or file name and filtered to text, images, or other files. Search and type filtering run in the backend across the user's full history before the newest-first result limit is applied, so older matching records remain discoverable without loading every item into the browser.
 
-Long text is collapsed in clipboard history so one record cannot dominate the page. Its protected `/items/:id` detail page loads the record directly with owner isolation, supports browser navigation, and shows the complete content without truncation.
+History previews collapse only when their rendered height exceeds 220 px. Their protected `/items/:id` detail page shows complete content, with sticky copy/edit controls, code line numbers, horizontal scrolling, and optional code wrapping. Returning to the library preserves the filters and scroll position; these settings also survive a reload in the same browser tab.
 
 Text presentation recognizes fenced code, JSON, Markdown, standalone web links, and common Go, TypeScript/JavaScript, Python, SQL, YAML, Java, Shell, HTML, and CSS snippets. Code receives language-aware highlighting, Markdown is rendered with raw HTML disabled, and ordinary text keeps its original whitespace.
+
+### Editing and drafts
+
+New text and unfinished edits are automatically saved on the current device, separately for each signed-in user. Closing an editor keeps its draft; successful submission clears only the submitted draft. New text typed while another submission is in flight is retained. Drafts are local to this browser and are not synchronized between devices. If browser storage is blocked or full, the editor displays a warning.
+
+Enter inserts a newline; Ctrl/Command+Enter submits or saves. Mobile editors open full screen, and the composer also offers expanded editing. Text is never silently truncated in the input; the editor shows a character/UTF-8 size count and warns when text exceeds the 1 MiB save limit. Split oversized text or upload it as a file.
 
 ### Notes, tags, and favorites
 
@@ -73,7 +79,15 @@ Notes, tags, and favorite state are organization metadata for the signed-in owne
 
 Clipboard records support text, browser-safe image previews, and arbitrary file downloads. Files are limited to 100 MiB each by default (`SUIDU_MAX_FILE_BYTES`) and are stored in the `suidu-files` Docker volume; PostgreSQL stores only their metadata. SVG and other potentially executable formats are always downloaded instead of rendered inline.
 
-On the clipboard page, screenshots and copied files can be uploaded immediately with `Ctrl+V` or `⌘V`; text-only paste continues to work normally in the editor. Deleting an attachment removes its source object before deleting metadata, and the request fails without removing the record if storage deletion cannot be completed. Deleting a source record also invalidates its public share links through the database cascade.
+On the clipboard page, screenshots and copied files can be uploaded immediately with `Ctrl+V` or `⌘V`; when the editor receives a clipboard containing both text and a file, native text paste takes priority. Each upload displays its filename and progress, with a retry action on failure.
+
+### Recycle bin
+
+Deleting a record moves it into the recycle bin and retains its attachment. Its public share links are immediately and permanently revoked. Restore keeps the original ID, creation time, notes, tags, and favorite status; restoring never reactivates old share links. Trash has no automatic expiry.
+
+The recycle bin supports restoration and individually confirmed permanent deletion. Permanent deletion removes the source attachment and metadata. If deletion is interrupted after it begins, the item remains marked as pending deletion and cannot be restored; retry permanent deletion to finish safely. Backups contain active library items only.
+
+Authenticated endpoints: `DELETE /api/clipboard/:id` moves to trash; `GET /api/trash` lists up to 200 owned trash items; `POST /api/clipboard/:id/restore` restores; `DELETE /api/trash/:id` permanently deletes an already-trashed item.
 
 The API and SFTPGo share the volume through a dedicated `suidu` directory. `suidu-storage-init` only initializes its ownership and permissions before the API starts. Include both the PostgreSQL database and the `suidu-files` volume in backups and migrations.
 

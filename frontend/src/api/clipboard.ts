@@ -11,6 +11,8 @@ export interface ClipboardItem {
   sizeBytes?: number
   source: string
   createdAt: string
+  deletedAt?: string
+  purgePending?: boolean
   note?: string
   tags?: string[]
   favorite?: boolean
@@ -75,4 +77,18 @@ export function clipboardContentUrl(id: number, download = false): string {
 
 export async function deleteClipboard(id: number): Promise<void> {
   await api.delete(`/clipboard/${id}`)
+}
+
+export async function listTrash(): Promise<ClipboardItem[]> {
+  const { data } = await api.get<{ items: ClipboardItem[] }>('/trash', { params: { limit: 200 } })
+  return data.items
+}
+
+export async function restoreClipboard(id: number): Promise<ClipboardItem> {
+  const { data } = await api.post<ClipboardItem>(`/clipboard/${id}/restore`)
+  return data
+}
+
+export async function purgeClipboard(id: number): Promise<void> {
+  await api.delete(`/trash/${id}`)
 }
