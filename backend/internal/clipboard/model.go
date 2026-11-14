@@ -85,6 +85,8 @@ type ImportItem struct {
 }
 
 type Repository interface {
+	// Revision is an opaque, per-user change token; absent users start at "0".
+	Revision(ctx context.Context, userID int64) (string, error)
 	CreateText(ctx context.Context, userID int64, content, source string) (Item, error)
 	CreateAttachment(ctx context.Context, userID int64, attachment Attachment) (Item, error)
 	Get(ctx context.Context, userID, id int64) (Item, error)

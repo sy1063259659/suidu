@@ -38,6 +38,40 @@ func (r *PostgresRepository) Close() {
 	r.pool.Close()
 }
 
+func (r *PostgresRepository) Revision(ctx context.Context, userID int64) (string, error) {
+	var revision string
+	err := r.pool.QueryRow(ctx, `SELECT COALESCE(
+		(SELECT revision::text FROM clipboard_user_revisions WHERE user_id = $1), '0')`, userID).Scan(&revision)
+	return revision, err
+}
+
+// Lock before touching any item or share row: AFTER revision triggers alone
+// would allow item -> revision -> share and share -> revision lock cycles.
+// The lock is transaction-scoped and shared by all mutation entrypoints.
+func beginUserMutation(ctx context.Context, begin func(context.Context) (pgx.Tx, error), userID int64) (pgx.Tx, error) {
+	tx, err := begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1::bigint)`, userID); err != nil {
+		_ = tx.Rollback(context.Background())
+		return nil, err
+	}
+	return tx, nil
+}
+
+func (r *PostgresRepository) mutate(ctx context.Context, userID int64, change func(pgx.Tx) error) error {
+	tx, err := beginUserMutation(ctx, r.pool.Begin, userID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.Background())
+	if err := change(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 const itemColumns = `id, user_id, kind, content, file_name, media_type, size_bytes, storage_key, content_hash, note, source, created_at, tags, favorite, deleted_at, purge_pending`
 
 func (r *PostgresRepository) CreateText(ctx context.Context, userID int64, content, source string) (Item, error) {
@@ -46,11 +80,13 @@ func (r *PostgresRepository) CreateText(ctx context.Context, userID int64, conte
 	}
 
 	var item Item
-	err := r.pool.QueryRow(ctx, `
+	err := r.mutate(ctx, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
 		INSERT INTO clipboard_items (user_id, kind, content, content_hash, source)
 		VALUES ($1, 'text', $2, $3, $4)
 		RETURNING `+itemColumns+`
 	`, userID, content, textContentHash(content), normalizeSource(source)).Scan(itemDestinations(&item)...)
+	})
 	return item, err
 }
 
@@ -59,11 +95,13 @@ func (r *PostgresRepository) CreateAttachment(ctx context.Context, userID int64,
 		return Item{}, err
 	}
 	var item Item
-	err := r.pool.QueryRow(ctx, `
+	err := r.mutate(ctx, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
 		INSERT INTO clipboard_items (user_id, kind, content, file_name, media_type, size_bytes, storage_key, content_hash, source)
 		VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8)
 		RETURNING `+itemColumns+`
 	`, userID, attachment.Kind, normalizeFileName(attachment.FileName), attachment.MediaType, attachment.SizeBytes, attachment.StorageKey, attachment.ContentHash, normalizeSource(attachment.Source)).Scan(itemDestinations(&item)...)
+	})
 	return item, err
 }
 
@@ -96,21 +134,25 @@ func (r *PostgresRepository) Import(ctx context.Context, userID int64, input Imp
 		if err := validateContent(input.Content); err != nil {
 			return Item{}, err
 		}
-		err = r.pool.QueryRow(ctx, `
+		err = r.mutate(ctx, userID, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `
 			INSERT INTO clipboard_items (user_id, kind, content, content_hash, note, source, created_at, tags, favorite)
 			VALUES ($1, 'text', $2, $3, $4, $5, $6, $7, $8)
 			RETURNING `+itemColumns+`
 		`, userID, input.Content, textContentHash(input.Content), metadata.Note, normalizeSource(input.Source), createdAt, metadata.Tags, metadata.Favorite).Scan(itemDestinations(&item)...)
+		})
 		return item, err
 	}
 	if err := validateAttachment(input.Attachment); err != nil || input.Attachment.Kind != input.Kind {
 		return Item{}, ErrInvalidFile
 	}
-	err = r.pool.QueryRow(ctx, `
+	err = r.mutate(ctx, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
 		INSERT INTO clipboard_items (user_id, kind, content, file_name, media_type, size_bytes, storage_key, content_hash, note, source, created_at, tags, favorite)
 		VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING `+itemColumns+`
 	`, userID, input.Kind, normalizeFileName(input.Attachment.FileName), input.Attachment.MediaType, input.Attachment.SizeBytes, input.Attachment.StorageKey, input.Attachment.ContentHash, metadata.Note, normalizeSource(input.Attachment.Source), createdAt, metadata.Tags, metadata.Favorite).Scan(itemDestinations(&item)...)
+	})
 	return item, err
 }
 
@@ -194,13 +236,15 @@ func (r *PostgresRepository) UpdateMetadata(ctx context.Context, userID, id int6
 		return Item{}, err
 	}
 	var item Item
-	err = r.pool.QueryRow(ctx, `
+	err = r.mutate(ctx, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
 		UPDATE clipboard_items
 		SET note = $3, tags = $4, favorite = $5,
 		    content = COALESCE($6, content), content_hash = CASE WHEN $6::text IS NULL THEN content_hash ELSE $7 END
 		WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL AND ($6::text IS NULL OR kind = 'text')
 		RETURNING `+itemColumns+`
 	`, userID, id, normalized.Note, normalized.Tags, normalized.Favorite, normalized.Content, metadataContentHash(normalized)).Scan(itemDestinations(&item)...)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Item{}, ErrNotFound
 	}
@@ -215,18 +259,20 @@ func metadataContentHash(metadata ItemMetadata) string {
 }
 
 func (r *PostgresRepository) Delete(ctx context.Context, userID, id int64) error {
-	result, err := r.pool.Exec(ctx, `DELETE FROM clipboard_items WHERE user_id = $1 AND id = $2`, userID, id)
-	if err != nil {
-		return err
-	}
-	if result.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return r.mutate(ctx, userID, func(tx pgx.Tx) error {
+		result, err := tx.Exec(ctx, `DELETE FROM clipboard_items WHERE user_id = $1 AND id = $2`, userID, id)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func (r *PostgresRepository) Trash(ctx context.Context, userID, id int64) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, err := beginUserMutation(ctx, r.pool.Begin, userID)
 	if err != nil {
 		return err
 	}
@@ -271,9 +317,11 @@ func (r *PostgresRepository) ListTrash(ctx context.Context, userID int64, limit 
 
 func (r *PostgresRepository) Restore(ctx context.Context, userID, id int64) (Item, error) {
 	var item Item
-	err := r.pool.QueryRow(ctx, `UPDATE clipboard_items SET deleted_at = NULL
+	err := r.mutate(ctx, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `UPDATE clipboard_items SET deleted_at = NULL
 		WHERE user_id = $1 AND id = $2 AND deleted_at IS NOT NULL AND purge_pending = FALSE
 		RETURNING `+itemColumns, userID, id).Scan(itemDestinations(&item)...)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Item{}, ErrNotFound
 	}
@@ -283,15 +331,21 @@ func (r *PostgresRepository) Restore(ctx context.Context, userID, id int64) (Ite
 func (r *PostgresRepository) Purge(ctx context.Context, userID, id int64, deleteSource func(context.Context, string) error) error {
 	// Commit intent before touching the external file store. Even if a later
 	// database operation fails, restore cannot revive an item whose source is gone.
-	intent, err := r.pool.Exec(ctx, `UPDATE clipboard_items SET purge_pending = TRUE
-		WHERE user_id = $1 AND id = $2 AND deleted_at IS NOT NULL`, userID, id)
+	err := r.mutate(ctx, userID, func(tx pgx.Tx) error {
+		intent, err := tx.Exec(ctx, `UPDATE clipboard_items SET purge_pending = TRUE
+			WHERE user_id = $1 AND id = $2 AND deleted_at IS NOT NULL`, userID, id)
+		if err != nil {
+			return err
+		}
+		if intent.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	if intent.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	tx, err := r.pool.Begin(ctx)
+	tx, err := beginUserMutation(ctx, r.pool.Begin, userID)
 	if err != nil {
 		return err
 	}
@@ -322,8 +376,10 @@ func (r *PostgresRepository) Purge(ctx context.Context, userID, id int64, delete
 }
 
 func (r *PostgresRepository) AssignOrphanedItems(ctx context.Context, userID int64) error {
-	_, err := r.pool.Exec(ctx, `UPDATE clipboard_items SET user_id = $1 WHERE user_id IS NULL`, userID)
-	return err
+	return r.mutate(ctx, userID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE clipboard_items SET user_id = $1 WHERE user_id IS NULL`, userID)
+		return err
+	})
 }
 
 const shareItemColumns = `
@@ -336,7 +392,8 @@ func (r *PostgresRepository) CreateShare(ctx context.Context, userID int64, inpu
 		return Share{}, err
 	}
 	var share Share
-	err := r.pool.QueryRow(ctx, `
+	err := r.mutate(ctx, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
 		WITH inserted AS (
 			INSERT INTO clipboard_shares (user_id, item_id, token, expires_at)
 			SELECT $1, i.id, $3, $4
@@ -349,6 +406,7 @@ func (r *PostgresRepository) CreateShare(ctx context.Context, userID int64, inpu
 		FROM inserted s
 		JOIN clipboard_items i ON i.id = s.item_id
 	`, userID, input.ItemID, input.Token, input.ExpiresAt.UTC()).Scan(shareDestinations(&share)...)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Share{}, ErrNotFound
 	}
@@ -397,18 +455,20 @@ func (r *PostgresRepository) GetPublicShare(ctx context.Context, token string) (
 }
 
 func (r *PostgresRepository) RevokeShare(ctx context.Context, userID, id int64) error {
-	result, err := r.pool.Exec(ctx, `
+	return r.mutate(ctx, userID, func(tx pgx.Tx) error {
+		result, err := tx.Exec(ctx, `
 		UPDATE clipboard_shares
 		SET revoked_at = NOW()
 		WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
 	`, id, userID)
-	if err != nil {
-		return err
-	}
-	if result.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func shareDestinations(share *Share) []any {

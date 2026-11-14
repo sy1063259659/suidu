@@ -3,6 +3,7 @@ package clipboard
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,13 +15,20 @@ type MemoryRepository struct {
 	nextShareID int64
 	items       map[int64]Item
 	shares      map[int64]Share
+	revisions   map[int64]uint64
 	now         func() time.Time
 }
 
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		nextID: 1, nextShareID: 1, items: make(map[int64]Item), shares: make(map[int64]Share), now: time.Now,
+		nextID: 1, nextShareID: 1, items: make(map[int64]Item), shares: make(map[int64]Share), revisions: make(map[int64]uint64), now: time.Now,
 	}
+}
+
+func (r *MemoryRepository) Revision(_ context.Context, userID int64) (string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return strconv.FormatUint(r.revisions[userID], 10), nil
 }
 
 func (r *MemoryRepository) CreateText(_ context.Context, userID int64, content, source string) (Item, error) {
@@ -42,6 +50,7 @@ func (r *MemoryRepository) CreateText(_ context.Context, userID int64, content, 
 	}
 	r.nextID++
 	r.items[item.ID] = item
+	r.revisions[userID]++
 	return item, nil
 }
 
@@ -65,6 +74,7 @@ func (r *MemoryRepository) CreateAttachment(_ context.Context, userID int64, att
 	}
 	r.nextID++
 	r.items[item.ID] = item
+	r.revisions[userID]++
 	return item, nil
 }
 
@@ -112,6 +122,7 @@ func (r *MemoryRepository) Import(_ context.Context, userID int64, input ImportI
 	item.ID = r.nextID
 	r.nextID++
 	r.items[item.ID] = item
+	r.revisions[userID]++
 	return item, nil
 }
 
@@ -186,6 +197,7 @@ func (r *MemoryRepository) UpdateMetadata(_ context.Context, userID, id int64, m
 	item.Favorite = normalized.Favorite
 	item.Note = normalized.Note
 	r.items[id] = item
+	r.revisions[userID]++
 	for shareID, share := range r.shares {
 		if share.Item.ID == id {
 			share.Item = item
@@ -204,6 +216,7 @@ func (r *MemoryRepository) Delete(_ context.Context, userID, id int64) error {
 		return ErrNotFound
 	}
 	delete(r.items, id)
+	r.revisions[userID]++
 	for shareID, share := range r.shares {
 		if share.Item.ID == id {
 			delete(r.shares, shareID)
@@ -222,6 +235,7 @@ func (r *MemoryRepository) Trash(_ context.Context, userID, id int64) error {
 	now := r.now().UTC()
 	item.DeletedAt = &now
 	r.items[id] = item
+	r.revisions[userID]++
 	for shareID, share := range r.shares {
 		if share.Item.ID == id && share.RevokedAt == nil {
 			share.RevokedAt = &now
@@ -261,6 +275,7 @@ func (r *MemoryRepository) Restore(_ context.Context, userID, id int64) (Item, e
 	}
 	item.DeletedAt = nil
 	r.items[id] = item
+	r.revisions[userID]++
 	return item, nil
 }
 
@@ -271,14 +286,18 @@ func (r *MemoryRepository) Purge(ctx context.Context, userID, id int64, deleteSo
 	if !ok || item.UserID != userID || item.DeletedAt == nil {
 		return ErrNotFound
 	}
-	item.PurgePending = true
-	r.items[id] = item
+	if !item.PurgePending {
+		item.PurgePending = true
+		r.items[id] = item
+		r.revisions[userID]++
+	}
 	if item.StorageKey != "" {
 		if err := deleteSource(ctx, item.StorageKey); err != nil {
 			return err
 		}
 	}
 	delete(r.items, id)
+	r.revisions[userID]++
 	for shareID, share := range r.shares {
 		if share.Item.ID == id {
 			delete(r.shares, shareID)
@@ -309,6 +328,7 @@ func (r *MemoryRepository) CreateShare(_ context.Context, userID int64, input Cr
 	}
 	r.nextShareID++
 	r.shares[share.ID] = share
+	r.revisions[userID]++
 	return share, nil
 }
 
@@ -359,5 +379,6 @@ func (r *MemoryRepository) RevokeShare(_ context.Context, userID, id int64) erro
 	revokedAt := r.now().UTC()
 	share.RevokedAt = &revokedAt
 	r.shares[id] = share
+	r.revisions[userID]++
 	return nil
 }

@@ -69,6 +69,12 @@ New text and unfinished edits are automatically saved on the current device, sep
 
 Enter inserts a newline; Ctrl/Command+Enter submits or saves. Mobile editors open full screen, and the composer also offers expanded editing. Text is never silently truncated in the input; the editor shows a character/UTF-8 size count and warns when text exceeds the 1 MiB save limit. Split oversized text or upload it as a file.
 
+### Cross-device updates
+
+Open pages check the signed-in user's change version every five seconds and silently refresh the active library, detail, share, or recycle-bin view only when needed. Saved content, attachments, edits, favorites, notes, tags, and deletion/restoration changes appear across devices without reloading the page. Draft input, filters, and the library reading position are retained.
+
+Checks pause while the page is hidden, offline, editing in a dialog, uploading, or processing a local change. Returning to the page, reconnecting, or closing an editor checks again. Temporary failures retain the current content and retry with a backoff of up to 30 seconds. `GET /api/changes` requires authentication and returns only the current user's version, with caching disabled.
+
 ### Notes, tags, and favorites
 
 Each clipboard record can have a private note of up to 500 characters and up to 10 private tags, with at most 24 characters per tag. Notes are intended for one or two sentences describing what the record is for. Notes and tags are displayed on the record and included in clipboard search; tags are trimmed and deduplicated case-insensitively. Important records can be starred and retrieved with the favorites-only filter.

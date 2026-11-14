@@ -58,3 +58,57 @@ CREATE INDEX IF NOT EXISTS idx_clipboard_shares_user_created
 CREATE INDEX IF NOT EXISTS idx_clipboard_shares_active_token
     ON clipboard_shares (token, expires_at)
     WHERE revoked_at IS NULL;
+
+-- A per-user row serializes mutations until commit, so concurrently committed
+-- changes cannot be hidden by an earlier transaction's larger sequence value.
+-- No user FK: cascaded user deletion must still be able to run these triggers.
+CREATE TABLE IF NOT EXISTS clipboard_user_revisions (
+    user_id BIGINT PRIMARY KEY,
+    revision BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE OR REPLACE FUNCTION clipboard_bump_user_revision() RETURNS TRIGGER AS $$
+DECLARE
+    previous_user_id BIGINT;
+    current_user_id BIGINT;
+    changed_user_id BIGINT;
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        previous_user_id := OLD.user_id;
+    END IF;
+    IF TG_OP <> 'DELETE' THEN
+        current_user_id := NEW.user_id;
+    END IF;
+    -- Updating ownership invalidates both owners, once each; legacy unowned
+    -- rows have no user to notify. Lock multiple owner rows in a stable order.
+    FOR changed_user_id IN
+        SELECT DISTINCT owner_id
+        FROM (VALUES (previous_user_id), (current_user_id)) AS owners(owner_id)
+        WHERE owner_id IS NOT NULL
+        ORDER BY owner_id
+    LOOP
+        INSERT INTO clipboard_user_revisions (user_id, revision)
+        VALUES (changed_user_id, 1)
+        ON CONFLICT (user_id) DO UPDATE
+        SET revision = clipboard_user_revisions.revision + 1;
+    END LOOP;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'clipboard_items_revision'
+                   AND tgrelid = 'clipboard_items'::regclass) THEN
+        CREATE TRIGGER clipboard_items_revision
+            AFTER INSERT OR UPDATE OR DELETE ON clipboard_items
+            FOR EACH ROW EXECUTE FUNCTION clipboard_bump_user_revision();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'clipboard_shares_revision'
+                   AND tgrelid = 'clipboard_shares'::regclass) THEN
+        CREATE TRIGGER clipboard_shares_revision
+            AFTER INSERT OR UPDATE OR DELETE ON clipboard_shares
+            FOR EACH ROW EXECUTE FUNCTION clipboard_bump_user_revision();
+    END IF;
+END;
+$$;

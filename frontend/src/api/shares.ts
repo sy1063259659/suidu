@@ -24,7 +24,7 @@ export async function createClipboardShare(itemId: number, expiresInSeconds: num
 }
 
 export async function listClipboardShares(limit = 50): Promise<ClipboardShare[]> {
-  const { data } = await api.get<{ shares: ClipboardShare[] }>('/shares', { params: { limit } })
+  const { data } = await api.get<{ shares: ClipboardShare[] }>('/shares', { params: { limit }, timeout: 15000 })
   return data.shares
 }
 
