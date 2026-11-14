@@ -1,11 +1,109 @@
 package clipboard
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+type mutationLockTx struct {
+	pgx.Tx
+	lockStarted chan struct{}
+	lockRelease chan struct{}
+	lockErr     error
+	userID      int64
+	rollback    bool
+	rollbackErr error
+}
+
+func (tx *mutationLockTx) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	if query != `SELECT pg_advisory_xact_lock($1::bigint)` || len(args) != 1 {
+		panic("expected user lock before mutation SQL")
+	}
+	tx.userID = args[0].(int64)
+	if tx.lockStarted != nil {
+		close(tx.lockStarted)
+	}
+	if tx.lockRelease != nil {
+		select {
+		case <-tx.lockRelease:
+		case <-ctx.Done():
+			return pgconn.CommandTag{}, ctx.Err()
+		}
+	}
+	return pgconn.CommandTag{}, tx.lockErr
+}
+
+func (tx *mutationLockTx) Rollback(ctx context.Context) error {
+	tx.rollback = true
+	tx.rollbackErr = ctx.Err()
+	return nil
+}
+
+func TestBeginUserMutationWaitsForOwnerLockBeforeReturningTransaction(t *testing.T) {
+	tx := &mutationLockTx{lockStarted: make(chan struct{}), lockRelease: make(chan struct{})}
+	begin := func(context.Context) (pgx.Tx, error) { return tx, nil }
+	type result struct {
+		tx  pgx.Tx
+		err error
+	}
+	ready := make(chan result, 1)
+	go func() {
+		locked, err := beginUserMutation(t.Context(), begin, 42)
+		ready <- result{locked, err}
+	}()
+	<-tx.lockStarted
+	select {
+	case <-ready:
+		t.Fatal("mutation may touch rows before its owner lock is acquired")
+	default:
+	}
+	close(tx.lockRelease)
+	got := <-ready
+	if got.err != nil || got.tx != tx || tx.userID != 42 || tx.rollback {
+		t.Fatalf("locked mutation = %#v, tx = %#v", got, tx)
+	}
+}
+
+func TestBeginUserMutationRollsBackCanceledLockWait(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	tx := &mutationLockTx{lockStarted: make(chan struct{}), lockRelease: make(chan struct{})}
+	begin := func(context.Context) (pgx.Tx, error) { return tx, nil }
+	ready := make(chan error, 1)
+	go func() {
+		locked, err := beginUserMutation(ctx, begin, 42)
+		if locked != nil {
+			ready <- errors.New("canceled lock wait returned a usable mutation transaction")
+			return
+		}
+		ready <- err
+	}()
+	<-tx.lockStarted
+	cancel()
+	if err := <-ready; !errors.Is(err, context.Canceled) {
+		t.Fatalf("lock wait cancellation = %v", err)
+	}
+	if !tx.rollback || tx.rollbackErr != nil {
+		t.Fatalf("failed lock wait must release transaction using uncanceled context: %#v", tx)
+	}
+}
+
+func TestBeginUserMutationBeginAndLockFailures(t *testing.T) {
+	failure := errors.New("database failure")
+	if tx, err := beginUserMutation(t.Context(), func(context.Context) (pgx.Tx, error) { return nil, failure }, 1); tx != nil || !errors.Is(err, failure) {
+		t.Fatalf("begin failure = %#v, %v", tx, err)
+	}
+	tx := &mutationLockTx{lockErr: failure}
+	if got, err := beginUserMutation(t.Context(), func(context.Context) (pgx.Tx, error) { return tx, nil }, 1); got != nil || !errors.Is(err, failure) || !tx.rollback {
+		t.Fatalf("lock failure = %#v, %v; rollback = %v", got, err, tx.rollback)
+	}
+}
 
 func TestBuildListItemsQueryIncludesCreatedAtBounds(t *testing.T) {
 	from := time.Date(2026, 8, 25, 2, 0, 0, 0, time.UTC)

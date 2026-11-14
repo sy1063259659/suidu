@@ -134,10 +134,14 @@ func TestHandlerExportAndImportBackup(t *testing.T) {
 		t.Fatalf("update metadata: %v", err)
 	}
 	router := newTestRouter(repo)
+	exportRevision := readRevision(t, repo, 1)
 	exportResponse := httptest.NewRecorder()
 	router.ServeHTTP(exportResponse, httptest.NewRequest(http.MethodGet, "/api/backup/export", nil))
 	if exportResponse.Code != http.StatusOK || exportResponse.Header().Get("Content-Type") != "application/zip" {
 		t.Fatalf("export response = %d, content type = %q", exportResponse.Code, exportResponse.Header().Get("Content-Type"))
+	}
+	if got := readRevision(t, repo, 1); got != exportRevision {
+		t.Fatalf("export advanced revision: %d -> %d", exportRevision, got)
 	}
 	archive, err := zip.NewReader(bytes.NewReader(exportResponse.Body.Bytes()), int64(exportResponse.Body.Len()))
 	if err != nil {
@@ -166,6 +170,21 @@ func TestHandlerExportAndImportBackup(t *testing.T) {
 	importRouter.ServeHTTP(importResponse, multipartBackupRequest(t, exportResponse.Body.Bytes()))
 	if importResponse.Code != http.StatusOK || !strings.Contains(importResponse.Body.String(), `"imported":1`) {
 		t.Fatalf("import response = %d, body = %s", importResponse.Code, importResponse.Body.String())
+	}
+	if got := readRevision(t, importRepo, 1); got == 0 {
+		t.Fatal("backup import did not advance revision")
+	}
+	if got := readRevision(t, importRepo, 2); got != 0 {
+		t.Fatal("backup import advanced another user's revision")
+	}
+	importRevision := readRevision(t, importRepo, 1)
+	duplicateResponse := httptest.NewRecorder()
+	importRouter.ServeHTTP(duplicateResponse, multipartBackupRequest(t, exportResponse.Body.Bytes()))
+	if duplicateResponse.Code != http.StatusOK || !strings.Contains(duplicateResponse.Body.String(), `"skippedDuplicates":1`) {
+		t.Fatalf("duplicate import = %d %s", duplicateResponse.Code, duplicateResponse.Body.String())
+	}
+	if got := readRevision(t, importRepo, 1); got != importRevision {
+		t.Fatal("skipped duplicate import advanced revision")
 	}
 	items, err := importRepo.List(t.Context(), 1, ListFilter{})
 	if err != nil || len(items) != 1 || items[0].Note != "迁移测试" || !items[0].Favorite {

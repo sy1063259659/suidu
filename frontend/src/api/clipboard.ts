@@ -29,8 +29,15 @@ export interface ListClipboardOptions {
 
 const api = axios.create({ baseURL: '/api' })
 
+export async function getChangesVersion(): Promise<string> {
+  const { data } = await api.get<{ version: string }>('/changes', { timeout: 10000 })
+  if (typeof data.version !== 'string') throw new Error('Invalid change version')
+  return data.version
+}
+
 export async function listClipboard(options: ListClipboardOptions = {}): Promise<ClipboardItem[]> {
   const { data } = await api.get<{ items: ClipboardItem[] }>('/clipboard', {
+    timeout: 15000,
     params: {
       limit: options.limit ?? 50,
       q: options.query?.trim() || undefined,
@@ -44,7 +51,7 @@ export async function listClipboard(options: ListClipboardOptions = {}): Promise
 }
 
 export async function getClipboard(id: number): Promise<ClipboardItem> {
-  const { data } = await api.get<ClipboardItem>(`/clipboard/${id}`)
+  const { data } = await api.get<ClipboardItem>(`/clipboard/${id}`, { timeout: 15000 })
   return data
 }
 
@@ -80,7 +87,7 @@ export async function deleteClipboard(id: number): Promise<void> {
 }
 
 export async function listTrash(): Promise<ClipboardItem[]> {
-  const { data } = await api.get<{ items: ClipboardItem[] }>('/trash', { params: { limit: 200 } })
+  const { data } = await api.get<{ items: ClipboardItem[] }>('/trash', { params: { limit: 200 }, timeout: 15000 })
   return data.items
 }
 

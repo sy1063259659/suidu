@@ -43,6 +43,7 @@ func NewHandler(repo Repository, files filestore.Store, maxFileBytes int64) *Han
 }
 
 func (h *Handler) RegisterRoutes(router gin.IRouter) {
+	router.GET("/changes", h.changes)
 	router.GET("/clipboard", h.list)
 	router.GET("/clipboard/:id", h.get)
 	router.POST("/clipboard", h.create)
@@ -58,6 +59,21 @@ func (h *Handler) RegisterRoutes(router gin.IRouter) {
 	router.POST("/shares/:id/revoke", h.revokeShare)
 	router.GET("/backup/export", h.exportBackup)
 	router.POST("/backup/import", h.importBackup)
+}
+
+func (h *Handler) changes(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	user, ok := auth.CurrentUser(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	version, err := h.repo.Revision(c.Request.Context(), user.ID)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "failed to get changes version")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"version": version})
 }
 
 func (h *Handler) get(c *gin.Context) {

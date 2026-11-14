@@ -11,7 +11,7 @@ import {
   changePassword, createUser, getCurrentUser, listUsers, login, logout, resetUserPassword,
   setUserDisabled, type User,
 } from './api/auth'
-import { createClipboard, deleteClipboard, getClipboard, listClipboard, listTrash, purgeClipboard, restoreClipboard, updateClipboardMetadata, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
+import { createClipboard, deleteClipboard, getChangesVersion, getClipboard, listClipboard, listTrash, purgeClipboard, restoreClipboard, updateClipboardMetadata, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
 import { createClipboardShare, listClipboardShares, publicShareUrl, revokeClipboardShare, type ClipboardShare } from './api/shares'
 import { downloadBackup, importBackup, type ImportBackupResult } from './api/backup'
 import ClipboardItemContent from './components/ClipboardItemContent.vue'
@@ -23,6 +23,8 @@ import { clearDraft, readDraft, readStoredDraft, writeDraft } from './utils/draf
 import { readLibraryState, writeLibraryState } from './utils/libraryState'
 import { captureResultsHeight, preservedResultsStyle } from './utils/historyLayout'
 import { MAX_TEXT_BYTES, formatTextBytes, textStats } from './utils/textEditor'
+import { createAutoSync } from './utils/autoSync'
+import { captureHistoryAnchors, reconcileItems, restoreHistoryAnchor } from './utils/liveHistory'
 import {
   applyCustomTimeFilter,
   applyTimePreset,
@@ -181,16 +183,23 @@ const pendingPurge = shallowRef<ClipboardItem | null>(null)
 const deleting = ref(false)
 let trashRequestSequence = 0
 function requestTrash(item: ClipboardItem) { pendingTrash.value = item }
-async function loadTrash() {
+async function loadTrash(silent = false): Promise<boolean> {
   const sequence = ++trashRequestSequence
   const generation = sessionGeneration
-  trashLoading.value = true
-  trashError.value = ''
+  const epoch = collectionEpoch
+  const view = syncViewKey()
+  if (!silent) { trashLoading.value = true; trashError.value = '' }
   try {
     const result = await listTrash()
-    if (sequence === trashRequestSequence && isCurrentSession(generation)) trashItems.value = result
-  } catch (err) { if (sequence === trashRequestSequence && isCurrentSession(generation)) trashError.value = errorMessage(err, '回收站加载失败，请重试。') }
-  finally { if (sequence === trashRequestSequence) trashLoading.value = false }
+    if (sequence !== trashRequestSequence || !isCurrentSession(generation) || (silent && !canApplyBackground(epoch, view))) return false
+    trashItems.value = reconcileItems(trashItems.value, result)
+    return true
+  } catch (err) {
+    if (sequence !== trashRequestSequence || !isCurrentSession(generation)) return false
+    if (silent) throw err
+    trashError.value = errorMessage(err, '回收站加载失败，请重试。')
+    return false
+  } finally { if (!silent && sequence === trashRequestSequence) trashLoading.value = false }
 }
 async function restoreItem(id: number) {
   if (trashBusyId.value !== null) return
@@ -276,6 +285,7 @@ const groupedHistoryItems = computed(() => groupTimelineItemsByLocalDay(items.va
 
 let searchTimer: ReturnType<typeof window.setTimeout> | undefined
 let listRequestSequence = 0
+let collectionEpoch = 0
 let restoringWorkspace = false
 let libraryScrollY = 0
 let draftTimer: ReturnType<typeof setTimeout> | undefined
@@ -351,11 +361,15 @@ function confirmDuplicate(item: ClipboardItem) {
   return window.confirm(`${duplicateDescription(item)}已存在于内容库中，是否仍要创建一条新的记录？`)
 }
 
-async function loadItems() {
+async function loadItems(silent = false): Promise<boolean> {
   const requestSequence = ++listRequestSequence
-  loading.value = true
-  error.value = ''
-  if (apiStatus.value !== 'online') apiStatus.value = 'checking'
+  const epoch = collectionEpoch
+  const view = syncViewKey()
+  if (!silent) {
+    loading.value = true
+    error.value = ''
+    if (apiStatus.value !== 'online') apiStatus.value = 'checking'
+  }
   try {
     const timeParams = toClipboardTimeParams(resolveTimeRange(timePreset.value, customTimeRange.value, new Date()))
     const result = await listClipboard({
@@ -365,37 +379,53 @@ async function loadItems() {
       createdFrom: timeParams.createdFrom,
       createdBefore: timeParams.createdBefore,
     })
-    if (requestSequence !== listRequestSequence) return
-    items.value = result
+    if (requestSequence !== listRequestSequence || (silent && !canApplyBackground(epoch, view))) return false
+    const root = historyResultsElement.value
+    const anchors = silent && root ? captureHistoryAnchors(root) : []
+    items.value = reconcileItems(items.value, result)
     apiStatus.value = 'online'
-  } catch {
-    if (requestSequence !== listRequestSequence) return
+    if (silent && anchors.length) {
+      await nextTick()
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      if (root && requestSequence === listRequestSequence && view === syncViewKey()) restoreHistoryAnchor(root, anchors)
+    }
+    return true
+  } catch (err) {
+    if (requestSequence !== listRequestSequence) return false
+    if (silent) throw err
     apiStatus.value = 'offline'
     error.value = '无法连接服务，请稍后重试。'
+    return false
   } finally {
-    if (requestSequence === listRequestSequence) {
+    if (!silent && requestSequence === listRequestSequence) {
       loading.value = false
       favoritesFilterTransitioning.value = false
     }
   }
 }
 
-async function loadDetailItem() {
-  if (!detailItemId.value) return
+async function loadDetailItem(silent = false): Promise<boolean> {
+  if (!detailItemId.value) return false
   const generation = sessionGeneration
+  const epoch = collectionEpoch
+  const view = syncViewKey()
   const requestedID = detailItemId.value
-  detailLoading.value = true
-  detailUnavailable.value = false
+  if (!silent) { detailLoading.value = true; detailUnavailable.value = false }
   try {
     const item = await getClipboard(requestedID)
-    if (isCurrentSession(generation) && detailItemId.value === requestedID) detailItem.value = item
+    if (!isCurrentSession(generation) || detailItemId.value !== requestedID || (silent && !canApplyBackground(epoch, view))) return false
+    detailItem.value = reconcileItems(detailItem.value ? [detailItem.value] : [], [item])[0]!
+    detailUnavailable.value = false
+    return true
   } catch (errorValue) {
-    if (!isCurrentSession(generation) || detailItemId.value !== requestedID) return
+    if (!isCurrentSession(generation) || detailItemId.value !== requestedID || (silent && !canApplyBackground(epoch, view))) return false
+    if (silent && (!axios.isAxiosError(errorValue) || errorValue.response?.status !== 404)) throw errorValue
     detailItem.value = null
     detailUnavailable.value = axios.isAxiosError(errorValue) && errorValue.response?.status === 404
     if (!detailUnavailable.value) error.value = '无法加载内容详情，请稍后重试。'
+    return detailUnavailable.value
   } finally {
-    if (isCurrentSession(generation) && detailItemId.value === requestedID) detailLoading.value = false
+    if (!silent && isCurrentSession(generation) && detailItemId.value === requestedID) detailLoading.value = false
   }
 }
 
@@ -406,11 +436,22 @@ async function loadAdminUsers() {
   try { const users = await listUsers(); if (isCurrentSession(generation)) adminUsers.value = users } catch (errorValue) { if (isCurrentSession(generation)) adminError.value = errorMessage(errorValue, '无法加载用户列表。') } finally { if (isCurrentSession(generation)) adminLoading.value = false }
 }
 
-async function loadShares() {
+async function loadShares(silent = false): Promise<boolean> {
   const generation = sessionGeneration
-  sharesLoading.value = true
-  shareError.value = ''
-  try { const result = await listClipboardShares(); if (isCurrentSession(generation)) shares.value = result } catch (errorValue) { if (isCurrentSession(generation)) shareError.value = errorMessage(errorValue, '无法加载分享链接。') } finally { if (isCurrentSession(generation)) sharesLoading.value = false }
+  const epoch = collectionEpoch
+  const view = syncViewKey()
+  if (!silent) { sharesLoading.value = true; shareError.value = '' }
+  try {
+    const result = await listClipboardShares()
+    if (!isCurrentSession(generation) || (silent && !canApplyBackground(epoch, view))) return false
+    shares.value = result
+    return true
+  } catch (err) {
+    if (!isCurrentSession(generation)) return false
+    if (silent) throw err
+    shareError.value = errorMessage(err, '无法加载分享链接。')
+    return false
+  } finally { if (!silent && isCurrentSession(generation)) sharesLoading.value = false }
 }
 
 async function exportBackup() {
@@ -825,6 +866,64 @@ async function refreshActiveView() {
   } finally { if (isCurrentSession(generation)) refreshLoading.value = false }
 }
 
+function syncViewKey() {
+  return detailItemId.value ? `detail:${detailItemId.value}` : activeView.value
+}
+
+const syncBusy = computed(() => Boolean(
+  authLoading.value || loginLoading.value || loading.value || detailLoading.value || sharesLoading.value || trashLoading.value || refreshLoading.value ||
+  editItem.value || editSaving.value || composeExpanded.value || tagModalOpen.value || tagSaving.value || shareModalOpen.value || shareCreating.value || passwordFormOpen.value ||
+  pendingTrash.value || pendingPurge.value || deleting.value || trashBusyId.value !== null || favoriteUpdatingId.value !== null || submitting.value || backupImporting.value ||
+  uploadEntries.value.some(entry => entry.status === 'uploading')
+))
+
+function canRefreshAutomatically() {
+  return Boolean(currentUser.value && !publicToken && !syncBusy.value &&
+    document.visibilityState === 'visible' && navigator.onLine !== false && !window.getSelection()?.toString() &&
+    (isDetailPage.value || ['clipboard', 'shares', 'trash'].includes(activeView.value)))
+}
+
+function canApplyBackground(epoch: number, view: string) {
+  return canRefreshAutomatically() && epoch === collectionEpoch && view === syncViewKey()
+}
+
+const autoSync = createAutoSync({
+  isActive: canRefreshAutomatically,
+  readVersion: async () => {
+    const generation = sessionGeneration
+    const version = await getChangesVersion()
+    if (isCurrentSession(generation)) apiStatus.value = 'online'
+    return version
+  },
+  refresh: async () => {
+    if (!canRefreshAutomatically()) return false
+    if (isDetailPage.value) return loadDetailItem(true)
+    if (activeView.value === 'shares') return loadShares(true)
+    if (activeView.value === 'trash') return loadTrash(true)
+    return loadItems(true)
+  },
+  onError: (err) => {
+    if (axios.isAxiosError(err) && err.response?.status === 401) {
+      loginError.value = '登录已失效，请重新登录。'
+      currentUser.value = null
+    } else apiStatus.value = 'offline'
+  },
+})
+function checkForChanges() { void autoSync.check() }
+
+// Reject responses that were started before a local mutation or another fetch completed.
+watch([items, shares, trashItems, detailItem], () => { collectionEpoch++ }, { flush: 'sync' })
+watch(() => currentUser.value?.id, () => { autoSync.stop() }, { flush: 'sync' })
+watch([currentUser, authLoading, loginLoading], () => {
+  if (!publicToken && currentUser.value && !authLoading.value && !loginLoading.value) autoSync.start()
+  else autoSync.stop()
+})
+watch(syncViewKey, () => {
+  autoSync.invalidate()
+  checkForChanges()
+})
+watch(syncBusy, (busy) => { if (!busy) checkForChanges() })
+
 function formatDateTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function formatHistoryItemTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) }
 function handleKeydown(event: KeyboardEvent) { if (!event.isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
@@ -920,15 +1019,22 @@ onMounted(() => {
     window.addEventListener('scroll', onScroll, { passive: true })
     window.addEventListener('pagehide', onPageHidden)
     document.addEventListener('visibilitychange', onPageHidden)
+    document.addEventListener('visibilitychange', checkForChanges)
+    window.addEventListener('focus', checkForChanges)
+    window.addEventListener('online', checkForChanges)
   }
 })
 onUnmounted(() => {
+  autoSync.stop()
   onPageHidden()
   document.removeEventListener('paste', handlePaste)
   window.removeEventListener('popstate', handlePopState)
   window.removeEventListener('scroll', onScroll)
   window.removeEventListener('pagehide', onPageHidden)
   document.removeEventListener('visibilitychange', onPageHidden)
+  document.removeEventListener('visibilitychange', checkForChanges)
+  window.removeEventListener('focus', checkForChanges)
+  window.removeEventListener('online', checkForChanges)
   window.history.scrollRestoration = previousScrollRestoration
   cancelAnimationFrame(scrollFrame)
   if (draftTimer) clearTimeout(draftTimer)
@@ -1024,7 +1130,7 @@ onUnmounted(() => {
             </n-list-item>
           </n-list>
         </main>
-        <TrashPage v-else-if="activeView === 'trash'" :items="trashItems" :loading="trashLoading" :busy-id="trashBusyId" :error="trashError" @restore="(item) => restoreItem(item.id)" @purge="(item) => pendingPurge = item" @refresh="loadTrash" />
+        <TrashPage v-else-if="activeView === 'trash'" :items="trashItems" :loading="trashLoading" :busy-id="trashBusyId" :error="trashError" @restore="(item) => restoreItem(item.id)" @purge="(item) => pendingPurge = item" @refresh="() => loadTrash()" />
         <main v-show="!isDetailPage && activeView === 'clipboard'" class="clipboard-page">
           <section class="page-intro"><div><p class="eyebrow">CONTENT LIBRARY</p><h1>内容库</h1><p class="intro-copy">在设备之间保存、整理和传递内容。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条{{ hasActiveFilters ? '匹配' : '记录' }}
           </n-tag></section>
@@ -1100,7 +1206,7 @@ onUnmounted(() => {
                     </header>
                     <n-list class="history-group-list" bordered>
                       <n-list-item v-for="item in group.items" :key="item.id">
-                        <div class="history-item">
+                        <div class="history-item" :data-item-id="item.id">
                           <div class="item-card-header">
                             <n-space :size="8" align="center"><n-tag size="small" :bordered="false">{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : '文本' }}</n-tag><time :datetime="item.createdAt" :title="formatDateTime(item.createdAt)">{{ formatHistoryItemTime(item.createdAt) }}</time></n-space>
                             <ItemActions :item="item" :copied="copiedId === item.id" :favorite-updating="favoriteUpdatingId === item.id" @copy="copyItem" @favorite="toggleFavorite" @edit="openEditor" @organize="openTagModal" @share="openShareModal" @trash="requestTrash" />
