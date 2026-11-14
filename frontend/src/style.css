@@ -38,6 +38,35 @@ h2 { font-size: 21px; }
 .edit-content-modal { width: min(92vw, 860px); }
 .editor-hint { margin-top: 8px; color: #78869a; font-size: 12px; }
 .editor-status { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 12px; }
+.header-actions, .composer-heading, .editor-topline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.header-actions { justify-content: flex-end; flex-wrap: wrap; }
+.connection-status { display: inline-flex; align-items: center; gap: 7px; color: #64748b; font-size: 13px; }
+.connection-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #e5aa39; }
+.connection-status.online::before { background: #36a56e; }.connection-status.offline::before { background: #d34b62; }
+.composer-heading { margin-bottom: 12px; }.composer-heading .composer-title { margin: 0; }
+.item-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -4px 0 14px; }
+.item-card-header time { color: #718096; font-size: 12px; }
+.history-item .image-preview-link img { max-height: 220px; }
+.history-item .image-preview-link { max-width: 100%; }
+.workspace-editor-modal { width: min(94vw, 920px); }
+.workspace-editor-modal.is-fullscreen { width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0 !important; border-radius: 0; }
+.workspace-editor-modal.is-fullscreen > .n-card-content { display: flex; min-height: 0; flex-direction: column; }
+.workspace-editor-modal.is-fullscreen .content-editor { flex: 1; min-height: 120px; resize: none; }
+.editor-topline { margin-bottom: 12px; color: #718096; font-size: 12px; }
+.confirmation-modal { width: min(92vw, 460px); }.confirmation-modal p { line-height: 1.7; overflow-wrap: anywhere; }
+.draft-warning { color: #a56414; font-size: 12px; }
+.operation-feedback { position: fixed; z-index: 3000; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: 14px; width: max-content; max-width: calc(100vw - 32px); padding: 12px 16px; border-radius: 12px; color: #fff; background: #233b54; box-shadow: 0 8px 30px #17203330; font-size: 14px; }
+.operation-feedback.error { background: #8e3246; }.operation-feedback span { overflow-wrap: anywhere; }.operation-feedback button { flex-shrink: 0; border: 0; padding: 6px; color: #d3e8ff; background: transparent; cursor: pointer; font: inherit; }
+.upload-queue { display: grid; gap: 12px; margin-top: 18px; }.upload-entry { padding-top: 12px; border-top: 1px solid #e4eaf2; }.upload-entry-heading { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }.upload-entry-heading strong { min-width: 0; overflow-wrap: anywhere; }.upload-entry-heading span { color: #718096; flex-shrink: 0; }.upload-entry p { color: #a13046; margin: 6px 0; font-size: 12px; overflow-wrap: anywhere; }.upload-entry-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
+/* Sticky reading controls use the page scroll, rather than an inner layout scroller. */
+.app-shell.n-layout, .app-shell > .n-layout-scroll-container, .app-content.n-layout, .app-content > .n-layout-scroll-container { overflow: visible; }
+@media (max-width: 640px) {
+  .app-header { padding: 14px 16px; }.app-header.n-layout-header { flex-direction: row; align-items: center; gap: 10px; }.app-header .subtitle { display: none; }.header-actions { gap: 6px; }.header-actions .n-button { min-height: 44px; }.brand { font-size: 21px; }.brand span { display: none; }
+  .app-content { padding-right: 14px; padding-left: 14px; }.item-card-header { flex-wrap: wrap; }.composer-actions { flex-wrap: wrap; }.composer-actions .n-button { min-height: 44px; }
+  .workspace-editor-modal, .compose-expanded-modal { width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0 !important; border-radius: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .workspace-editor-modal > .n-card-content { display: flex; min-height: 0; flex-direction: column; }.workspace-editor-modal .content-editor { flex: 1; min-height: 120px; resize: none; font-size: 16px; }.workspace-editor-modal .n-button { min-height: 44px; }
+  .operation-feedback button { min-height: 36px; }.connection-status { max-width: 74px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 .upload-card { margin-top: 14px; border: 1px solid #e4eaf2; box-shadow: 0 8px 24px rgba(34, 52, 84, .04); }
 .upload-card .n-upload-dragger { padding: 18px 20px; border-color: #d8e2f0; background: #f8faff; }
 .upload-card .n-upload-dragger:hover { border-color: #2d6cdf; }

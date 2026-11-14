@@ -97,7 +97,13 @@ vi.mock('naive-ui', () => {
     },
   })
 
-  return { NAlert, NButton, NCard, NEmpty, NImage, NPopconfirm, NSpin, NSpace, NTag, NText }
+  const NDropdown = defineComponent({
+    props: { options: Array, trigger: String },
+    setup(props, { slots }) {
+      return () => h('div', { 'data-dropdown-trigger': props.trigger }, [slots.default?.(), h('span', { class: 'dropdown-options' }, JSON.stringify(props.options))])
+    },
+  })
+  return { NAlert, NButton, NCard, NDropdown, NEmpty, NImage, NPopconfirm, NSpin, NSpace, NTag, NText }
 })
 
 import ClipboardDetailPage from './ClipboardDetailPage.vue'
@@ -151,11 +157,11 @@ describe('ClipboardDetailPage', () => {
     expect(html).not.toContain('detail-footer')
     expect(html).toContain('aria-busy="true"')
     expect(html).toContain('已复制')
-    expect(html.indexOf('detail-created-at')).toBeLessThan(html.indexOf('detail-toolbar'))
+    expect(html.indexOf('detail-toolbar')).toBeLessThan(html.indexOf('detail-created-at'))
     expect(html.indexOf('detail-toolbar')).toBeLessThan(html.indexOf('detail-content'))
   })
 
-  it('keeps the copy/download branches and marks delete as a secondary action', async () => {
+  it('keeps copy/download branches and places trash in the secondary menu', async () => {
     const textHtml = await renderDetailPage()
     const fileHtml = await renderDetailPage({
       item: createItem({
@@ -167,25 +173,29 @@ describe('ClipboardDetailPage', () => {
       }),
     })
 
-    expect(textHtml).toContain('>复制</button>')
+    expect(textHtml).toContain('>复制全部</button>')
     expect(textHtml).toContain('>编辑</button>')
     expect(fileHtml).not.toContain('>编辑</button>')
     expect(textHtml).not.toContain('>下载</a>')
     expect(fileHtml).toContain('/api/clipboard/42/content?download=1')
     expect(fileHtml).toContain('>下载</a>')
-    expect(fileHtml).not.toContain('>复制</button>')
-    expect(fileHtml).toContain('detail-delete-action')
+    expect(fileHtml).not.toContain('>复制全部</button>')
+    expect(fileHtml).toContain('移入回收站')
+    expect(fileHtml).toContain('data-dropdown-trigger="click"')
   })
 
-  it('keeps the grouped action-bar structure needed for wrapped touch actions', async () => {
+  it('keeps primary touch actions compact and secondary actions in an accessible menu', async () => {
     const html = await renderDetailPage({
       item: createItem({ favorite: true }),
     })
 
     expect(html).toContain('class="detail-toolbar"')
     expect(html).toContain('class="detail-actions"')
-    expect(html.match(/detail-action-button/g)?.length).toBe(5)
-    expect(html).toContain('detail-action-button detail-delete-action')
+    expect(html.match(/detail-action-button/g)?.length).toBe(3)
+    expect(html).toContain('aria-haspopup="menu"')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('整理标签与备注')
+    expect(html).toContain('取消收藏')
   })
 
   it('shows browser-side quick conversion tools for text records only', async () => {

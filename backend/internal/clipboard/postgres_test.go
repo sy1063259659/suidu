@@ -49,3 +49,31 @@ func TestBuildListItemsQueryLeavesOptionalBoundsNil(t *testing.T) {
 		t.Fatalf("expected nil optional bounds, got %#v", args)
 	}
 }
+
+func TestPostgresTrashQueriesAndAdditiveMigration(t *testing.T) {
+	activeQuery, _ := buildListItemsQuery(42, ListFilter{})
+	if !strings.Contains(activeQuery, "WHERE user_id = $1 AND deleted_at IS NULL") {
+		t.Fatalf("normal list must exclude trash and scope ownership: %s", activeQuery)
+	}
+	trashQuery, args := buildListTrashQuery(42, 100)
+	for _, clause := range []string{
+		"WHERE user_id = $1 AND deleted_at IS NOT NULL",
+		"ORDER BY deleted_at DESC, id DESC",
+		"LIMIT NULLIF($2, 0)",
+	} {
+		if !strings.Contains(trashQuery, clause) {
+			t.Fatalf("trash query missing %q: %s", clause, trashQuery)
+		}
+	}
+	if !reflect.DeepEqual(args, []any{int64(42), 100}) {
+		t.Fatalf("trash args = %#v", args)
+	}
+	if !strings.Contains(schema, "ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ") ||
+		!strings.Contains(schema, "ADD COLUMN IF NOT EXISTS purge_pending BOOLEAN NOT NULL DEFAULT FALSE") ||
+		!strings.Contains(schema, "CREATE INDEX IF NOT EXISTS idx_clipboard_items_user_trash") {
+		t.Fatal("trash migration must be additive and safe to repeat")
+	}
+	if !strings.Contains(itemColumns, "deleted_at") || !strings.Contains(shareItemColumns, "i.deleted_at") {
+		t.Fatal("item and share scans must carry deletion state")
+	}
+}

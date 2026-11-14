@@ -1,22 +1,26 @@
 <script setup lang="ts">
 import axios from 'axios'
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { Archive, ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Tags, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { Archive, ArrowLeft, ClipboardList, ClipboardPaste, Copy, Download, ExternalLink, KeyRound, Link, Link2Off, LogIn, Maximize2, MoreHorizontal, Paperclip, RefreshCw, Search, Send, Share2, ShieldCheck, Star, Trash2, UploadCloud, UserPlus, Users } from '@lucide/vue'
 import {
   NAlert, NButton, NButtonGroup, NCard, NDynamicTags, NEmpty, NInput, NLayout, NLayoutContent, NLayoutHeader,
-  NDatePicker, NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
+  NDatePicker, NDropdown, NList, NListItem, NModal, NPopconfirm, NProgress, NSelect, NSpace, NSpin, NTag, NText, NUpload, NUploadDragger,
   type UploadCustomRequestOptions,
 } from 'naive-ui'
 import {
   changePassword, createUser, getCurrentUser, listUsers, login, logout, resetUserPassword,
   setUserDisabled, type User,
 } from './api/auth'
-import { clipboardContentUrl, createClipboard, deleteClipboard, getClipboard, listClipboard, updateClipboardMetadata, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
+import { createClipboard, deleteClipboard, getClipboard, listClipboard, listTrash, purgeClipboard, restoreClipboard, updateClipboardMetadata, uploadClipboardFile, type ClipboardItem, type ClipboardItemKind } from './api/clipboard'
 import { createClipboardShare, listClipboardShares, publicShareUrl, revokeClipboardShare, type ClipboardShare } from './api/shares'
 import { downloadBackup, importBackup, type ImportBackupResult } from './api/backup'
 import ClipboardItemContent from './components/ClipboardItemContent.vue'
 import ClipboardDetailPage from './components/ClipboardDetailPage.vue'
 import PublicSharePage from './components/PublicSharePage.vue'
+import ItemActions from './components/ItemActions.vue'
+import TrashPage from './components/TrashPage.vue'
+import { clearDraft, readDraft, readStoredDraft, writeDraft } from './utils/draftStorage'
+import { readLibraryState, writeLibraryState } from './utils/libraryState'
 import { captureResultsHeight, preservedResultsStyle } from './utils/historyLayout'
 import { MAX_TEXT_BYTES, formatTextBytes, textStats } from './utils/textEditor'
 import {
@@ -38,6 +42,8 @@ function detailIDFromPath() {
 
 const items = ref<ClipboardItem[]>([])
 const currentUser = ref<User | null>(null)
+let sessionGeneration = 0
+function isCurrentSession(generation: number) { return generation === sessionGeneration && currentUser.value !== null }
 const detailItemId = ref(detailIDFromPath())
 const detailItem = shallowRef<ClipboardItem | null>(null)
 const detailLoading = ref(false)
@@ -60,6 +66,49 @@ const newUserPassword = ref('')
 const adminError = ref('')
 const adminSuccess = ref('')
 const draft = ref('')
+const draftRestored = ref(false)
+const draftStorageFailed = ref(false)
+const composeExpanded = ref(false)
+const editExpanded = ref(false)
+const editRestored = ref(false)
+const feedback = ref<{ text: string; kind: 'success' | 'error'; undoId?: number } | null>(null)
+let feedbackTimer: ReturnType<typeof setTimeout> | undefined
+function notify(text: string, kind: 'success' | 'error' = 'success', undoId?: number) {
+  if (feedbackTimer) clearTimeout(feedbackTimer)
+  feedback.value = { text, kind, undoId }
+  feedbackTimer = setTimeout(() => { feedback.value = null }, undoId ? 9000 : 4500)
+}
+function storage(kind: 'localStorage' | 'sessionStorage') {
+  try { return window[kind] } catch { return undefined }
+}
+function persistDrafts() {
+  const userID = currentUser.value?.id
+  if (!userID) return
+  const local = storage('localStorage')
+  let saved = local ? writeDraft(local, userID, draft.value) : false
+  if (editItem.value) {
+    const itemKey = `item:${editItem.value.id}`
+    const editSaved = Boolean(local && (editDraft.value === (editItem.value.content ?? '')
+      ? clearDraft(local, userID, itemKey) : writeDraft(local, userID, editDraft.value, itemKey)))
+    saved = editSaved && saved
+  }
+  draftStorageFailed.value = !saved
+}
+function discardComposer() {
+  draft.value = ''
+  draftRestored.value = false
+  persistDrafts()
+}
+function closeEditor() {
+  if (editSaving.value) return
+  persistDrafts()
+  editItem.value = null
+}
+function discardEdits() {
+  editDraft.value = editItem.value?.content ?? ''
+  editRestored.value = false
+  persistDrafts()
+}
 const loading = ref(false)
 const submitting = ref(false)
 const error = ref('')
@@ -80,24 +129,40 @@ const textLimitMessage = '文本超过 1 MiB 保存上限，已完整保留在�
 
 function openEditor(item: ClipboardItem) {
   editItem.value = item
-  editDraft.value = item.content ?? ''
+  const local = storage('localStorage')
+  const saved = local && currentUser.value ? readStoredDraft(local, currentUser.value.id, `item:${item.id}`) : null
+  editRestored.value = saved !== null && saved !== (item.content ?? '')
+  editDraft.value = saved ?? item.content ?? ''
+  editExpanded.value = window.matchMedia('(max-width: 640px)').matches
   editError.value = ''
 }
 
 async function saveContent() {
   const item = editItem.value
   if (!item || editSaving.value || !editDraft.value.trim() || editTooLarge.value) return
+  const generation = sessionGeneration
   editSaving.value = true
   editError.value = ''
   try {
-    replaceItem(await updateClipboardMetadata(item.id, item.note ?? '', item.tags ?? [], Boolean(item.favorite), editDraft.value))
+    const updated = await updateClipboardMetadata(item.id, item.note ?? '', item.tags ?? [], Boolean(item.favorite), editDraft.value)
+    if (!isCurrentSession(generation)) return
+    replaceItem(updated)
+    const local = storage('localStorage')
+    if (local && currentUser.value) clearDraft(local, currentUser.value.id, `item:${item.id}`)
     editItem.value = null
+    notify('内容已保存')
     if (hasActiveFilters.value) void loadItems()
   } catch (err) {
+    if (!isCurrentSession(generation)) return
     editError.value = errorMessage(err, '保存失败，请稍后重试。')
-  } finally { editSaving.value = false }
+  } finally { if (isCurrentSession(generation)) editSaving.value = false }
 }
-const uploadProgress = ref<Record<string, number>>({})
+type UploadEntry = { id: string; name: string; file?: File; status: 'uploading' | 'failed' | 'done' | 'skipped'; percent: number; error?: string }
+const uploadEntries = ref<UploadEntry[]>([])
+function updateUpload(id: string, update: Partial<UploadEntry>) {
+  uploadEntries.value = uploadEntries.value.map(entry => entry.id === id ? { ...entry, ...update } : entry)
+}
+function retryUpload(entry: UploadEntry) { if (entry.file) void submitFileUpload(entry.file, entry.id) }
 const shares = ref<ClipboardShare[]>([])
 const sharesLoading = ref(false)
 const shareModalOpen = ref(false)
@@ -106,7 +171,56 @@ const shareItem = shallowRef<ClipboardItem | null>(null)
 const shareTTL = ref(86400)
 const createdShare = shallowRef<ClipboardShare | null>(null)
 const shareError = ref('')
-const activeView = ref<'clipboard' | 'shares' | 'admin' | 'backup'>('clipboard')
+const activeView = ref<'clipboard' | 'shares' | 'admin' | 'backup' | 'trash'>('clipboard')
+const trashItems = ref<ClipboardItem[]>([])
+const trashLoading = ref(false)
+const trashError = ref('')
+const trashBusyId = ref<number | null>(null)
+const pendingTrash = shallowRef<ClipboardItem | null>(null)
+const pendingPurge = shallowRef<ClipboardItem | null>(null)
+const deleting = ref(false)
+let trashRequestSequence = 0
+function requestTrash(item: ClipboardItem) { pendingTrash.value = item }
+async function loadTrash() {
+  const sequence = ++trashRequestSequence
+  const generation = sessionGeneration
+  trashLoading.value = true
+  trashError.value = ''
+  try {
+    const result = await listTrash()
+    if (sequence === trashRequestSequence && isCurrentSession(generation)) trashItems.value = result
+  } catch (err) { if (sequence === trashRequestSequence && isCurrentSession(generation)) trashError.value = errorMessage(err, '回收站加载失败，请重试。') }
+  finally { if (sequence === trashRequestSequence) trashLoading.value = false }
+}
+async function restoreItem(id: number) {
+  if (trashBusyId.value !== null) return
+  trashBusyId.value = id
+  const generation = sessionGeneration
+  try {
+    await restoreClipboard(id)
+    if (!isCurrentSession(generation)) return
+    trashItems.value = trashItems.value.filter(item => item.id !== id)
+    await loadItems()
+    if (isCurrentSession(generation)) notify('内容已恢复，原分享链接保持失效')
+  } catch (err) { if (isCurrentSession(generation)) notify(errorMessage(err, '恢复失败，请重试。'), 'error') }
+  finally { if (isCurrentSession(generation)) trashBusyId.value = null }
+}
+async function permanentlyDelete() {
+  if (!pendingPurge.value || deleting.value) return
+  deleting.value = true
+  const id = pendingPurge.value.id
+  const generation = sessionGeneration
+  try {
+    await purgeClipboard(id)
+    if (!isCurrentSession(generation)) return
+    trashItems.value = trashItems.value.filter(item => item.id !== id)
+    pendingPurge.value = null
+    const local = storage('localStorage')
+    if (local && currentUser.value) clearDraft(local, currentUser.value.id, `item:${id}`)
+    notify('已彻底删除')
+  } catch (err) { if (isCurrentSession(generation)) { await loadTrash(); if (isCurrentSession(generation)) notify(errorMessage(err, '彻底删除失败，请重试。'), 'error') } }
+  finally { if (isCurrentSession(generation)) deleting.value = false }
+}
 const searchQuery = ref('')
 const itemKindFilter = ref<'all' | ClipboardItemKind>('all')
 const favoritesOnly = ref(false)
@@ -147,11 +261,6 @@ const shareExpiryOptions = [
 const canSubmit = computed(() => draft.value.trim().length > 0 && !submitting.value && !draftTooLarge.value)
 const isAdmin = computed(() => currentUser.value?.role === 'admin')
 const isDetailPage = computed(() => detailItemId.value > 0)
-const uploadingCount = computed(() => Object.keys(uploadProgress.value).length)
-const averageUploadProgress = computed(() => {
-  const values = Object.values(uploadProgress.value)
-  return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0
-})
 const hasActiveFilters = computed(() => (
   searchQuery.value.trim() !== ''
   || itemKindFilter.value !== 'all'
@@ -167,6 +276,60 @@ const groupedHistoryItems = computed(() => groupTimelineItemsByLocalDay(items.va
 
 let searchTimer: ReturnType<typeof window.setTimeout> | undefined
 let listRequestSequence = 0
+let restoringWorkspace = false
+let libraryScrollY = 0
+let draftTimer: ReturnType<typeof setTimeout> | undefined
+let scrollFrame = 0
+const previousScrollRestoration = window.history.scrollRestoration
+
+function rememberLibrary() {
+  if (!currentUser.value) return
+  const session = storage('sessionStorage')
+  if (session) writeLibraryState(session, currentUser.value.id, {
+    query: searchQuery.value, kind: itemKindFilter.value, favorites: favoritesOnly.value,
+    preset: timePreset.value, range: customTimeRange.value, scrollY: libraryScrollY,
+  })
+}
+function captureLibraryPosition() {
+  if (isDetailPage.value || activeView.value !== 'clipboard') return
+  libraryScrollY = window.scrollY
+  rememberLibrary()
+}
+async function restoreLibraryPosition() {
+  await nextTick()
+  requestAnimationFrame(() => {
+    if (!isDetailPage.value && activeView.value === 'clipboard') window.scrollTo({ top: libraryScrollY, behavior: 'instant' })
+  })
+}
+function onPageHidden() {
+  persistDrafts()
+  captureLibraryPosition()
+}
+function onScroll() {
+  if (!scrollFrame) scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; captureLibraryPosition() })
+}
+function changeView(view: typeof activeView.value) {
+  captureLibraryPosition()
+  if (isDetailPage.value) {
+    detailItemId.value = 0
+    detailItem.value = null
+    window.history.replaceState({}, '', '/')
+  }
+  activeView.value = view
+  if (view === 'clipboard') void restoreLibraryPosition()
+  else window.scrollTo({ top: 0, behavior: 'instant' })
+  if (view === 'trash') void loadTrash()
+}
+const navigationOptions = computed(() => [
+  { key: 'shares', label: '分享管理' }, { key: 'backup', label: '备份迁移' }, { key: 'trash', label: '回收站' },
+  ...(isAdmin.value ? [{ key: 'admin', label: '管理中心' }] : []),
+  { key: 'password', label: '修改密码' }, { key: 'logout', label: '退出登录' },
+])
+function selectNavigation(key: string) {
+  if (key === 'logout') void submitLogout()
+  else if (key === 'password') passwordFormOpen.value = !passwordFormOpen.value
+  else changeView(key as typeof activeView.value)
+}
 
 function errorMessage(errorValue: unknown, fallback: string) {
   if (axios.isAxiosError(errorValue) && typeof errorValue.response?.data?.error === 'string') return errorValue.response.data.error
@@ -219,32 +382,35 @@ async function loadItems() {
 
 async function loadDetailItem() {
   if (!detailItemId.value) return
+  const generation = sessionGeneration
   const requestedID = detailItemId.value
   detailLoading.value = true
   detailUnavailable.value = false
   try {
     const item = await getClipboard(requestedID)
-    if (detailItemId.value === requestedID) detailItem.value = item
+    if (isCurrentSession(generation) && detailItemId.value === requestedID) detailItem.value = item
   } catch (errorValue) {
-    if (detailItemId.value !== requestedID) return
+    if (!isCurrentSession(generation) || detailItemId.value !== requestedID) return
     detailItem.value = null
     detailUnavailable.value = axios.isAxiosError(errorValue) && errorValue.response?.status === 404
     if (!detailUnavailable.value) error.value = '无法加载内容详情，请稍后重试。'
   } finally {
-    if (detailItemId.value === requestedID) detailLoading.value = false
+    if (isCurrentSession(generation) && detailItemId.value === requestedID) detailLoading.value = false
   }
 }
 
 async function loadAdminUsers() {
   if (!isAdmin.value) return
+  const generation = sessionGeneration
   adminLoading.value = true
-  try { adminUsers.value = await listUsers() } catch (errorValue) { adminError.value = errorMessage(errorValue, '无法加载用户列表。') } finally { adminLoading.value = false }
+  try { const users = await listUsers(); if (isCurrentSession(generation)) adminUsers.value = users } catch (errorValue) { if (isCurrentSession(generation)) adminError.value = errorMessage(errorValue, '无法加载用户列表。') } finally { if (isCurrentSession(generation)) adminLoading.value = false }
 }
 
 async function loadShares() {
+  const generation = sessionGeneration
   sharesLoading.value = true
   shareError.value = ''
-  try { shares.value = await listClipboardShares() } catch (errorValue) { shareError.value = errorMessage(errorValue, '无法加载分享链接。') } finally { sharesLoading.value = false }
+  try { const result = await listClipboardShares(); if (isCurrentSession(generation)) shares.value = result } catch (errorValue) { if (isCurrentSession(generation)) shareError.value = errorMessage(errorValue, '无法加载分享链接。') } finally { if (isCurrentSession(generation)) sharesLoading.value = false }
 }
 
 async function exportBackup() {
@@ -293,17 +459,19 @@ async function loadSession() {
   } catch (errorValue) {
     if (!axios.isAxiosError(errorValue) || errorValue.response?.status !== 401) loginError.value = '无法连接认证服务，请稍后重试。'
     currentUser.value = null
-  } finally { authLoading.value = false }
+  } finally { authLoading.value = false; if (currentUser.value && !isDetailPage.value) void restoreLibraryPosition() }
 }
 
 async function submitLogin() {
   if (!loginUsername.value.trim() || !loginPassword.value || loginLoading.value) return
   loginLoading.value = true
   loginError.value = ''
-  try { currentUser.value = await login(loginUsername.value, loginPassword.value); loginPassword.value = ''; await Promise.all([loadItems(), loadShares(), loadDetailItem()]); await loadAdminUsers() } catch (errorValue) { loginError.value = errorMessage(errorValue, '登录失败，请稍后重试。') } finally { loginLoading.value = false }
+  try { currentUser.value = await login(loginUsername.value, loginPassword.value); loginPassword.value = ''; await Promise.all([loadItems(), loadShares(), loadDetailItem()]); await loadAdminUsers() } catch (errorValue) { loginError.value = errorMessage(errorValue, '登录失败，请稍后重试。') } finally { loginLoading.value = false; if (currentUser.value && !isDetailPage.value) void restoreLibraryPosition() }
 }
 
 async function submitLogout() {
+  persistDrafts()
+  rememberLibrary()
   try { await logout() } finally { listRequestSequence++; currentUser.value = null; items.value = []; detailItem.value = null; shares.value = []; adminUsers.value = []; passwordFormOpen.value = false; tagModalOpen.value = false; activeView.value = 'clipboard' }
 }
 
@@ -335,12 +503,14 @@ async function toggleUser(user: User) {
 }
 
 async function readClipboard() {
+  const generation = sessionGeneration
   if (!navigator.clipboard?.readText) { error.value = '当前浏览器不支持读取剪贴板。'; return }
-  try { draft.value = await navigator.clipboard.readText(); error.value = '' } catch { error.value = '读取剪贴板失败，请允许当前页面访问剪贴板。' }
+  try { const text = await navigator.clipboard.readText(); if (isCurrentSession(generation)) { draft.value = text; error.value = '' } } catch { if (isCurrentSession(generation)) error.value = '读取剪贴板失败，请允许当前页面访问剪贴板。' }
 }
 
 async function submitClipboard() {
   if (!canSubmit.value) return
+  const generation = sessionGeneration
   submitting.value = true; error.value = ''
   try {
     const content = draft.value
@@ -348,16 +518,24 @@ async function submitClipboard() {
     try {
       item = await createClipboard(content)
     } catch (errorValue) {
+      if (!isCurrentSession(generation)) return
       const duplicate = duplicateItemFromError(errorValue)
       if (!duplicate) throw errorValue
       if (!confirmDuplicate(duplicate)) { apiStatus.value = 'online'; return }
       item = await createClipboard(content, 'web', true)
     }
+    if (!isCurrentSession(generation)) return
     if (hasActiveFilters.value) void loadItems()
     else items.value = [item, ...items.value]
-    draft.value = ''
+    if (draft.value === content) { draft.value = ''; draftRestored.value = false; composeExpanded.value = false; persistDrafts() }
     apiStatus.value = 'online'
-  } catch { apiStatus.value = 'offline'; error.value = '提交失败，请稍后重试。' } finally { submitting.value = false }
+    notify('内容已保存')
+  } catch (err) {
+    if (!isCurrentSession(generation)) return
+    if (axios.isAxiosError(err) && !err.response) apiStatus.value = 'offline'
+    error.value = errorMessage(err, '提交失败，内容已保留，可再次提交。')
+    notify(error.value, 'error')
+  } finally { if (isCurrentSession(generation)) submitting.value = false }
 }
 
 interface UploadCallbacks {
@@ -367,42 +545,49 @@ interface UploadCallbacks {
 }
 
 async function submitFileUpload(file: File, uploadId: string, callbacks: UploadCallbacks = {}) {
+  const generation = sessionGeneration
+  if (!uploadEntries.value.some(entry => entry.id === uploadId)) uploadEntries.value.push({ id: uploadId, name: file.name, file, status: 'uploading', percent: 0 })
+  updateUpload(uploadId, { status: 'uploading', percent: 0, error: undefined })
   if (file.size > 100 * 1024 * 1024) {
     uploadError.value = `${file.name} 超过 100 MiB。`
+    updateUpload(uploadId, { status: 'failed', error: uploadError.value })
     callbacks.onError?.()
     return
   }
   uploadError.value = ''
-  uploadProgress.value = { ...uploadProgress.value, [uploadId]: 0 }
   try {
     const onProgress = (percent: number) => {
-      uploadProgress.value = { ...uploadProgress.value, [uploadId]: percent }
+      if (!isCurrentSession(generation)) return
+      updateUpload(uploadId, { percent })
       callbacks.onProgress?.(percent)
     }
     let item: ClipboardItem
     try {
       item = await uploadClipboardFile(file, 'web', onProgress)
     } catch (errorValue) {
+      if (!isCurrentSession(generation)) return
       const duplicate = duplicateItemFromError(errorValue)
       if (!duplicate) throw errorValue
       if (!confirmDuplicate(duplicate)) {
         apiStatus.value = 'online'
+        updateUpload(uploadId, { status: 'skipped', file: undefined })
         callbacks.onFinish?.()
         return
       }
       item = await uploadClipboardFile(file, 'web', onProgress, true)
     }
+    if (!isCurrentSession(generation)) return
     if (hasActiveFilters.value) void loadItems()
     else items.value = [item, ...items.value]
     apiStatus.value = 'online'
+    updateUpload(uploadId, { status: 'done', percent: 100, file: undefined })
+    notify(`${file.name} 已上传`)
     callbacks.onFinish?.()
   } catch (errorValue) {
+    if (!isCurrentSession(generation)) return
     uploadError.value = errorMessage(errorValue, `${file.name} 上传失败。`)
+    updateUpload(uploadId, { status: 'failed', error: uploadError.value })
     callbacks.onError?.()
-  } finally {
-    const next = { ...uploadProgress.value }
-    delete next[uploadId]
-    uploadProgress.value = next
   }
 }
 
@@ -439,17 +624,25 @@ function handlePaste(event: ClipboardEvent) {
 }
 
 async function copyItem(item: ClipboardItem) {
+  const generation = sessionGeneration
   if (!navigator.clipboard?.writeText) { error.value = '当前浏览器不支持写入剪贴板。'; return }
-  try { await navigator.clipboard.writeText(item.content || ''); copiedId.value = item.id; window.setTimeout(() => { if (copiedId.value === item.id) copiedId.value = null }, 1600) } catch { error.value = '复制失败，请检查浏览器剪贴板权限。' }
+  try { await navigator.clipboard.writeText(item.content || ''); if (!isCurrentSession(generation)) return; copiedId.value = item.id; notify('已复制'); window.setTimeout(() => { if (isCurrentSession(generation) && copiedId.value === item.id) copiedId.value = null }, 1600) } catch { if (isCurrentSession(generation)) notify('复制失败，请检查浏览器剪贴板权限。', 'error') }
 }
 
 async function removeItem(item: ClipboardItem) {
+  if (deleting.value) return
+  const generation = sessionGeneration
+  deleting.value = true
   try {
     await deleteClipboard(item.id)
+    if (!isCurrentSession(generation)) return
     items.value = items.value.filter((current) => current.id !== item.id)
     shares.value = shares.value.filter((share) => share.item.id !== item.id)
     if (detailItemId.value === item.id) closeDetail()
-  } catch (errorValue) { error.value = errorMessage(errorValue, '删除失败，请稍后重试。') }
+    pendingTrash.value = null
+    notify('已移入回收站，附件已保留', 'success', item.id)
+  } catch (errorValue) { if (isCurrentSession(generation)) notify(errorMessage(errorValue, '移入回收站失败，请重试。'), 'error') }
+  finally { if (isCurrentSession(generation)) deleting.value = false }
 }
 
 function replaceItem(updated: ClipboardItem) {
@@ -460,11 +653,12 @@ function replaceItem(updated: ClipboardItem) {
 }
 
 function openDetail(item: ClipboardItem) {
+  captureLibraryPosition()
   detailItemId.value = item.id
   detailItem.value = item
   detailUnavailable.value = false
   window.history.pushState({ suiduDetail: true }, '', `/items/${item.id}`)
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+  window.scrollTo({ top: 0, behavior: 'instant' })
 }
 
 function closeDetail() {
@@ -476,7 +670,8 @@ function closeDetail() {
   detailItem.value = null
   detailUnavailable.value = false
   window.history.pushState({}, '', '/')
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+  activeView.value = 'clipboard'
+  void restoreLibraryPosition()
 }
 
 function handlePopState() {
@@ -485,18 +680,25 @@ function handlePopState() {
   detailItem.value = nextID ? items.value.find((item) => item.id === nextID) ?? null : null
   detailUnavailable.value = false
   if (nextID && currentUser.value && !detailItem.value) void loadDetailItem()
+  if (!nextID) { activeView.value = 'clipboard'; void restoreLibraryPosition() }
+  else window.scrollTo({ top: 0, behavior: 'instant' })
 }
 
 async function toggleFavorite(item: ClipboardItem) {
   if (favoriteUpdatingId.value === item.id) return
+  const generation = sessionGeneration
   favoriteUpdatingId.value = item.id
   error.value = ''
   try {
-    replaceItem(await updateClipboardMetadata(item.id, item.note ?? '', item.tags ?? [], !item.favorite))
+    const updated = await updateClipboardMetadata(item.id, item.note ?? '', item.tags ?? [], !item.favorite)
+    if (!isCurrentSession(generation)) return
+    replaceItem(updated)
   } catch (errorValue) {
+    if (!isCurrentSession(generation)) return
     error.value = errorMessage(errorValue, '更新收藏状态失败。')
+    notify(error.value, 'error')
   } finally {
-    if (favoriteUpdatingId.value === item.id) favoriteUpdatingId.value = null
+    if (isCurrentSession(generation) && favoriteUpdatingId.value === item.id) favoriteUpdatingId.value = null
   }
 }
 
@@ -510,15 +712,20 @@ function openTagModal(item: ClipboardItem) {
 
 async function saveTags() {
   if (!tagItem.value || tagSaving.value) return
+  const generation = sessionGeneration
   tagSaving.value = true
   tagError.value = ''
   try {
-    replaceItem(await updateClipboardMetadata(tagItem.value.id, noteDraft.value, tagDraft.value, Boolean(tagItem.value.favorite)))
+    const updated = await updateClipboardMetadata(tagItem.value.id, noteDraft.value, tagDraft.value, Boolean(tagItem.value.favorite))
+    if (!isCurrentSession(generation)) return
+    replaceItem(updated)
     if (searchQuery.value.trim()) void loadItems()
     tagModalOpen.value = false
+    notify('备注和标签已保存')
   } catch (errorValue) {
+    if (!isCurrentSession(generation)) return
     tagError.value = errorMessage(errorValue, '保存失败，请检查备注和标签长度。')
-  } finally { tagSaving.value = false }
+  } finally { if (isCurrentSession(generation)) tagSaving.value = false }
 }
 
 function searchTag(tag: string) {
@@ -568,27 +775,35 @@ function openShareModal(item: ClipboardItem) {
 
 async function submitShare() {
   if (!shareItem.value || shareCreating.value) return
+  const generation = sessionGeneration
   shareCreating.value = true
   shareError.value = ''
   try {
-    createdShare.value = await createClipboardShare(shareItem.value.id, shareTTL.value)
+    const created = await createClipboardShare(shareItem.value.id, shareTTL.value)
+    if (!isCurrentSession(generation)) return
+    createdShare.value = created
     await loadShares()
   } catch (errorValue) {
+    if (!isCurrentSession(generation)) return
     shareError.value = errorMessage(errorValue, '创建分享链接失败。')
-  } finally { shareCreating.value = false }
+  } finally { if (isCurrentSession(generation)) shareCreating.value = false }
 }
 
 async function copyShareLink(share: ClipboardShare) {
+  const generation = sessionGeneration
   if (!navigator.clipboard?.writeText) { shareError.value = '当前浏览器不支持复制链接。'; return }
   try {
     await navigator.clipboard.writeText(publicShareUrl(share.token))
+    if (!isCurrentSession(generation)) return
     copiedShareId.value = share.id
-    window.setTimeout(() => { if (copiedShareId.value === share.id) copiedShareId.value = null }, 1600)
-  } catch { shareError.value = '复制链接失败。' }
+    notify('分享链接已复制')
+    window.setTimeout(() => { if (isCurrentSession(generation) && copiedShareId.value === share.id) copiedShareId.value = null }, 1600)
+  } catch { if (isCurrentSession(generation)) shareError.value = '复制链接失败。' }
 }
 
 async function revokeShare(share: ClipboardShare) {
-  try { await revokeClipboardShare(share.id); await loadShares() } catch (errorValue) { shareError.value = errorMessage(errorValue, '关闭分享链接失败。') }
+  const generation = sessionGeneration
+  try { await revokeClipboardShare(share.id); if (isCurrentSession(generation)) { await loadShares(); if (isCurrentSession(generation)) notify('分享链接已失效') } } catch (errorValue) { if (isCurrentSession(generation)) shareError.value = errorMessage(errorValue, '关闭分享链接失败。') }
 }
 
 function shareStatus(share: ClipboardShare): 'active' | 'expired' | 'revoked' {
@@ -598,14 +813,16 @@ function shareStatus(share: ClipboardShare): 'active' | 'expired' | 'revoked' {
 
 async function refreshActiveView() {
   if (refreshLoading.value) return
+  const generation = sessionGeneration
   refreshLoading.value = true
   try {
     if (isDetailPage.value) await loadDetailItem()
     else if (activeView.value === 'shares') await loadShares()
     else if (activeView.value === 'admin') await loadAdminUsers()
+    else if (activeView.value === 'trash') await loadTrash()
     else if (activeView.value === 'backup') return
     else await loadItems()
-  } finally { refreshLoading.value = false }
+  } finally { if (isCurrentSession(generation)) refreshLoading.value = false }
 }
 
 function formatDateTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
@@ -613,24 +830,109 @@ function formatHistoryItemTime(value: string) { return new Intl.DateTimeFormat('
 function handleKeydown(event: KeyboardEvent) { if (!event.isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void submitClipboard() } }
 
 watch([searchQuery, itemKindFilter, favoritesOnly, timePreset, customTimeRange], () => {
+  if (restoringWorkspace || !currentUser.value) return
+  rememberLibrary()
   if (searchTimer) window.clearTimeout(searchTimer)
   listRequestSequence++
   loading.value = false
   searchTimer = window.setTimeout(() => {
-    if (currentUser.value && activeView.value === 'clipboard') void loadItems()
+    if (currentUser.value) void loadItems()
   }, 300)
+}, { flush: 'sync' })
+
+watch(currentUser, (user, previous) => {
+  if (user?.id === previous?.id) return
+  sessionGeneration++
+  if (feedbackTimer) clearTimeout(feedbackTimer)
+  if (searchTimer) clearTimeout(searchTimer)
+  submitting.value = false
+  editSaving.value = false
+  deleting.value = false
+  tagSaving.value = false
+  shareCreating.value = false
+  refreshLoading.value = false
+  trashBusyId.value = null
+  favoriteUpdatingId.value = null
+  sharesLoading.value = false
+  adminLoading.value = false
+  detailLoading.value = false
+  copiedId.value = null
+  copiedShareId.value = null
+  shareModalOpen.value = false
+  shareItem.value = null
+  createdShare.value = null
+  shares.value = []
+  tagModalOpen.value = false
+  tagItem.value = null
+  error.value = ''
+  shareError.value = ''
+  uploadError.value = ''
+  if (previous) {
+    items.value = []
+    adminUsers.value = []
+    detailItemId.value = 0
+    detailItem.value = null
+    activeView.value = 'clipboard'
+    window.history.replaceState({}, '', '/')
+  }
+  listRequestSequence++
+  trashRequestSequence++
+  trashLoading.value = false
+  trashError.value = ''
+  const local = storage('localStorage')
+  if (previous && local) {
+    writeDraft(local, previous.id, draft.value)
+    if (editItem.value) writeDraft(local, previous.id, editDraft.value, `item:${editItem.value.id}`)
+  }
+  editItem.value = null
+  composeExpanded.value = false
+  feedback.value = null
+  pendingTrash.value = null
+  pendingPurge.value = null
+  trashItems.value = []
+  uploadEntries.value = []
+  draft.value = user && local ? readDraft(local, user.id) : ''
+  draftRestored.value = draft.value !== ''
+  draftStorageFailed.value = !local
+  restoringWorkspace = true
+  const session = storage('sessionStorage')
+  const state = user && session ? readLibraryState(session, user.id) : null
+  searchQuery.value = state?.query ?? ''
+  itemKindFilter.value = state?.kind ?? 'all'
+  favoritesOnly.value = state?.favorites ?? false
+  timePreset.value = state?.preset ?? 'all'
+  customTimeRange.value = state?.range ?? null
+  libraryScrollY = state?.scrollY ?? 0
+  restoringWorkspace = false
+}, { flush: 'sync' })
+
+watch([draft, editDraft], () => {
+  if (draftTimer) clearTimeout(draftTimer)
+  draftTimer = setTimeout(persistDrafts, 300)
 })
 
 onMounted(() => {
   if (!publicToken) {
+    window.history.scrollRestoration = 'manual'
     void loadSession()
     document.addEventListener('paste', handlePaste)
     window.addEventListener('popstate', handlePopState)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('pagehide', onPageHidden)
+    document.addEventListener('visibilitychange', onPageHidden)
   }
 })
 onUnmounted(() => {
+  onPageHidden()
   document.removeEventListener('paste', handlePaste)
   window.removeEventListener('popstate', handlePopState)
+  window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('pagehide', onPageHidden)
+  document.removeEventListener('visibilitychange', onPageHidden)
+  window.history.scrollRestoration = previousScrollRestoration
+  cancelAnimationFrame(scrollFrame)
+  if (draftTimer) clearTimeout(draftTimer)
+  if (feedbackTimer) clearTimeout(feedbackTimer)
   if (searchTimer) window.clearTimeout(searchTimer)
 })
 </script>
@@ -658,24 +960,12 @@ onUnmounted(() => {
   <n-layout v-else class="app-shell">
     <n-layout-header bordered class="app-header">
       <div><div class="brand">随渡 <span>SUIDU</span></div><div class="subtitle">把文字放在随手可取的地方</div></div>
-      <n-space align="center" :size="12">
-        <n-button v-if="!isDetailPage" :type="activeView === 'shares' ? 'primary' : 'default'" @click="activeView = activeView === 'shares' ? 'clipboard' : 'shares'"><template #icon><Share2 v-if="activeView !== 'shares'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'shares' ? '返回内容库' : '分享管理' }}
-        </n-button>
-        <n-button v-if="!isDetailPage" :type="activeView === 'backup' ? 'primary' : 'default'" @click="activeView = activeView === 'backup' ? 'clipboard' : 'backup'"><template #icon><Archive v-if="activeView !== 'backup'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'backup' ? '返回内容库' : '备份迁移' }}
-        </n-button>
-        <n-button v-if="isAdmin && !isDetailPage" :type="activeView === 'admin' ? 'primary' : 'default'" @click="activeView = activeView === 'admin' ? 'clipboard' : 'admin'"><template #icon><ShieldCheck v-if="activeView !== 'admin'" :size="16" /><ArrowLeft v-else :size="16" /></template>{{ activeView === 'admin' ? '返回内容库' : '管理中心' }}
-        </n-button>
-        <n-tag :type="isAdmin ? 'warning' : 'info'">{{ currentUser.username }} · {{ isAdmin ? '管理员' : '普通用户' }}
-        </n-tag>
-        <n-button quaternary @click="passwordFormOpen = !passwordFormOpen">修改密码
-        </n-button>
-        <n-button quaternary @click="submitLogout">退出
-        </n-button>
-        <n-tag :type="apiStatus === 'online' ? 'success' : apiStatus === 'offline' ? 'error' : 'warning'">API {{ apiStatus === 'online' ? '在线' : apiStatus === 'offline' ? '离线' : '检查中' }}
-        </n-tag>
-        <n-button quaternary circle aria-label="刷新内容" title="刷新内容" :loading="refreshLoading" @click="refreshActiveView"><template #icon><RefreshCw :size="17" /></template>
-        </n-button>
-      </n-space>
+      <div class="header-actions">
+        <n-button v-if="!isDetailPage && activeView !== 'clipboard'" secondary @click="changeView('clipboard')"><template #icon><ArrowLeft :size="16" /></template>内容库</n-button>
+        <span class="connection-status" :class="apiStatus" :title="apiStatus === 'online' ? '已连接' : apiStatus === 'offline' ? '连接中断，可重试' : '连接中'">{{ currentUser.username }}</span>
+        <n-button quaternary circle aria-label="刷新内容" title="刷新内容" :disabled="refreshLoading" :aria-busy="refreshLoading" @click="refreshActiveView"><template #icon><RefreshCw :size="17" /></template></n-button>
+        <n-dropdown trigger="click" :options="navigationOptions" @select="selectNavigation"><n-button secondary aria-label="应用菜单"><template #icon><MoreHorizontal :size="18" /></template>菜单</n-button></n-dropdown>
+      </div>
     </n-layout-header>
     <n-layout-content class="app-content">
         <n-card v-if="passwordFormOpen" class="account-card" :bordered="false">
@@ -685,7 +975,7 @@ onUnmounted(() => {
           </n-alert><n-alert v-if="passwordSuccess" type="success" class="form-alert">{{ passwordSuccess }}
           </n-alert>
         </n-card>
-        <ClipboardDetailPage v-if="isDetailPage" :item="detailItem" :loading="detailLoading" :unavailable="detailUnavailable" :favorite-updating="favoriteUpdatingId === detailItemId" :copied="copiedId === detailItemId" @back="closeDetail" @copy="copyItem" @edit="openEditor" @favorite="toggleFavorite" @organize="openTagModal" @share="openShareModal" @delete="removeItem" />
+        <ClipboardDetailPage v-if="isDetailPage" :item="detailItem" :loading="detailLoading" :unavailable="detailUnavailable" :favorite-updating="favoriteUpdatingId === detailItemId" :copied="copiedId === detailItemId" @back="closeDetail" @copy="copyItem" @edit="openEditor" @favorite="toggleFavorite" @organize="openTagModal" @share="openShareModal" @delete="requestTrash" />
         <main v-else-if="activeView === 'backup'" class="backup-page">
           <section class="page-intro"><div><p class="eyebrow">BACKUP &amp; MIGRATION</p><h1>备份与迁移</h1><p class="intro-copy">导出记录和附件，换服务器时可以直接恢复。</p></div><n-tag round :bordered="false" type="info"><template #icon><Archive :size="14" /></template>ZIP 备份</n-tag></section>
           <n-alert v-if="backupError" type="error" closable class="error-alert" @close="backupError = ''">{{ backupError }}
@@ -734,15 +1024,29 @@ onUnmounted(() => {
             </n-list-item>
           </n-list>
         </main>
-        <main v-else class="clipboard-page">
+        <TrashPage v-else-if="activeView === 'trash'" :items="trashItems" :loading="trashLoading" :busy-id="trashBusyId" :error="trashError" @restore="(item) => restoreItem(item.id)" @purge="(item) => pendingPurge = item" @refresh="loadTrash" />
+        <main v-show="!isDetailPage && activeView === 'clipboard'" class="clipboard-page">
           <section class="page-intro"><div><p class="eyebrow">CONTENT LIBRARY</p><h1>内容库</h1><p class="intro-copy">在设备之间保存、整理和传递内容。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条{{ hasActiveFilters ? '匹配' : '记录' }}
           </n-tag></section>
-          <n-card class="composer-card" :bordered="false"><h2 class="composer-title">添加内容</h2><textarea v-model="draft" class="content-editor" aria-label="添加内容" :aria-invalid="draftTooLarge" aria-describedby="draft-editor-status" placeholder="输入或粘贴要传递的文字..." rows="5" @keydown.stop="handleKeydown" /><div id="draft-editor-status" class="editor-status"><span class="editor-hint">Enter 换行 · Ctrl/⌘ + Enter 提交</span><span class="editor-hint">{{ draftStats.characters.toLocaleString() }} 字符 · {{ formatTextBytes(draftStats.bytes) }} / 1 MiB</span></div><n-alert v-if="draftTooLarge" type="warning" class="form-alert">{{ textLimitMessage }}</n-alert><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
+          <n-card class="composer-card" :bordered="false">
+            <div class="composer-heading"><h2 class="composer-title">添加内容</h2><n-button quaternary @click="composeExpanded = true"><template #icon><Maximize2 :size="16" /></template>展开编辑</n-button></div>
+            <textarea v-model="draft" class="content-editor" aria-label="添加内容" :aria-invalid="draftTooLarge" aria-describedby="draft-editor-status" placeholder="输入或粘贴要传递的文字..." rows="5" @keydown.stop="handleKeydown" />
+            <div id="draft-editor-status" class="editor-status"><span class="editor-hint">{{ draftStorageFailed ? '草稿暂时无法保存到此设备，请勿关闭页面' : draftRestored ? '已恢复上次草稿 · 自动保存在此设备' : '草稿自动保存在此设备' }}</span><span class="editor-hint">{{ draftStats.characters.toLocaleString() }} 字符 · {{ formatTextBytes(draftStats.bytes) }} / 1 MiB</span></div>
+            <n-alert v-if="draftTooLarge" type="warning" class="form-alert">{{ textLimitMessage }}</n-alert>
+            <div class="composer-actions"><n-popconfirm v-if="draft" @positive-click="discardComposer"><template #trigger><n-button quaternary>清空草稿</n-button></template>确认清空此设备上的这份草稿？</n-popconfirm><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div>
+          </n-card>
           <n-card class="upload-card" :bordered="false">
             <n-upload multiple :show-file-list="false" :custom-request="uploadFile">
               <n-upload-dragger><div class="upload-drop-content"><div class="upload-icon"><UploadCloud :size="22" /></div><div><strong>上传图片或文件</strong><span>点击、拖入，或直接 Ctrl+V / ⌘V 粘贴截图，单个不超过 100 MiB</span></div></div></n-upload-dragger>
             </n-upload>
-            <div v-if="uploadingCount" class="upload-status"><n-space justify="space-between"><n-text depth="3">正在上传 {{ uploadingCount }} 个文件</n-text><n-text depth="3">{{ averageUploadProgress }}%</n-text></n-space><n-progress type="line" :percentage="averageUploadProgress" :show-indicator="false" processing /></div>
+            <div v-if="uploadEntries.length" class="upload-queue" aria-label="上传记录">
+              <div v-for="entry in uploadEntries" :key="entry.id" class="upload-entry">
+                <div class="upload-entry-heading"><strong>{{ entry.name }}</strong><span>{{ entry.status === 'done' ? '已上传' : entry.status === 'failed' ? '上传失败' : entry.status === 'skipped' ? '已取消重复上传' : entry.percent === 100 ? '正在保存…' : `${entry.percent}%` }}</span></div>
+                <n-progress v-if="entry.status === 'uploading'" type="line" :percentage="entry.percent" :show-indicator="false" />
+                <p v-if="entry.error" role="alert">{{ entry.error }}</p>
+                <div v-if="entry.status !== 'uploading'" class="upload-entry-actions"><n-button v-if="entry.status === 'failed' && entry.file && entry.file.size <= 100 * 1024 * 1024" size="small" @click="retryUpload(entry)">重试上传</n-button><n-button quaternary size="small" @click="uploadEntries = uploadEntries.filter(current => current.id !== entry.id)">关闭</n-button></div>
+              </div>
+            </div>
           </n-card>
           <n-alert v-if="uploadError" type="error" closable class="error-alert" @close="uploadError = ''">{{ uploadError }}
           </n-alert>
@@ -755,7 +1059,7 @@ onUnmounted(() => {
               <div class="history-heading-status"><n-text depth="3">{{ hasActiveFilters ? `找到 ${items.length} 条` : '按时间倒序' }}</n-text></div>
             </div>
             <div class="history-toolbar">
-              <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" placeholder="搜索文本、文件名、备注或标签" aria-label="搜索内容记录">
+              <n-input v-model:value="searchQuery" class="history-search" clearable maxlength="200" :input-props="{ 'aria-label': '搜索内容记录' }" placeholder="搜索文本、文件名、备注或标签" aria-label="搜索内容记录">
                 <template #prefix><Search :size="17" /></template>
               </n-input>
               <div class="history-filter-scroll" role="group" aria-label="按类型筛选">
@@ -797,23 +1101,16 @@ onUnmounted(() => {
                     <n-list class="history-group-list" bordered>
                       <n-list-item v-for="item in group.items" :key="item.id">
                         <div class="history-item">
+                          <div class="item-card-header">
+                            <n-space :size="8" align="center"><n-tag size="small" :bordered="false">{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : '文本' }}</n-tag><time :datetime="item.createdAt" :title="formatDateTime(item.createdAt)">{{ formatHistoryItemTime(item.createdAt) }}</time></n-space>
+                            <ItemActions :item="item" :copied="copiedId === item.id" :favorite-updating="favoriteUpdatingId === item.id" @copy="copyItem" @favorite="toggleFavorite" @edit="openEditor" @organize="openTagModal" @share="openShareModal" @trash="requestTrash" />
+                          </div>
                           <ClipboardItemContent :item="item" preview @view-detail="openDetail(item)" />
                           <p v-if="item.note" class="item-note">{{ item.note }}</p>
                           <div v-if="item.tags?.length" class="item-tags" aria-label="记录标签">
                             <n-tag v-for="tag in item.tags" :key="tag" size="small" round :bordered="false" type="info" class="item-tag" role="button" tabindex="0" @click="searchTag(tag)" @keydown.enter="searchTag(tag)">{{ tag }}</n-tag>
                           </div>
-                          <div class="history-meta">
-                            <n-space :size="8" align="center"><n-tag size="small" :bordered="false"><template #icon><Paperclip v-if="item.kind !== 'text'" :size="12" /></template>{{ item.kind === 'image' ? '图片' : item.kind === 'file' ? '文件' : item.source || 'web' }}</n-tag><n-text depth="3">{{ formatHistoryItemTime(item.createdAt) }}</n-text></n-space>
-                            <n-space :size="4">
-                              <n-button quaternary circle :type="item.favorite ? 'warning' : 'default'" :disabled="favoriteUpdatingId === item.id" :aria-busy="favoriteUpdatingId === item.id" :aria-label="item.favorite ? '取消收藏' : '收藏记录'" :title="item.favorite ? '取消收藏' : '收藏记录'" @click="toggleFavorite(item)"><template #icon><Star :size="16" :fill="item.favorite ? 'currentColor' : 'none'" /></template></n-button>
-                              <n-button v-if="item.kind === 'text' || !item.kind" quaternary circle :aria-label="copiedId === item.id ? '已复制' : '复制记录'" :title="copiedId === item.id ? '已复制' : '复制记录'" @click="copyItem(item)"><template #icon><Copy :size="16" /></template></n-button>
-                              <n-button v-else tag="a" :href="clipboardContentUrl(item.id, true)" quaternary circle aria-label="下载文件" title="下载文件"><template #icon><Download :size="16" /></template></n-button>
-                              <n-button quaternary circle aria-label="整理记录" title="添加备注和标签" @click="openTagModal(item)"><template #icon><Tags :size="16" /></template></n-button>
-                              <n-button v-if="item.kind === 'text' || !item.kind" quaternary @click="openEditor(item)">编辑</n-button>
-                              <n-button quaternary circle aria-label="公开分享" title="公开分享" @click="openShareModal(item)"><template #icon><Share2 :size="16" /></template></n-button>
-                              <n-popconfirm @positive-click="removeItem(item)"><template #trigger><n-button quaternary circle aria-label="删除记录" title="删除记录"><template #icon><Trash2 :size="16" /></template></n-button></template>确定删除这条记录吗？</n-popconfirm>
-                            </n-space>
-                          </div>
+
                         </div>
                       </n-list-item>
                     </n-list>
@@ -838,12 +1135,29 @@ onUnmounted(() => {
         <n-space justify="end" class="share-modal-actions"><n-button @click="shareModalOpen = false">取消</n-button><n-button type="primary" :loading="shareCreating" @click="submitShare"><template #icon><Share2 :size="16" /></template>生成链接</n-button></n-space>
       </template>
     </n-modal>
-    <n-modal :show="Boolean(editItem)" preset="card" title="编辑内容" class="edit-content-modal" :mask-closable="!editSaving" :close-on-esc="!editSaving" :closable="!editSaving" @update:show="(show: boolean) => { if (!show && !editSaving) editItem = null }">
+    <n-modal v-model:show="composeExpanded" preset="card" title="添加内容" class="workspace-editor-modal compose-expanded-modal" :mask-closable="false">
+      <textarea v-model="draft" class="content-editor" aria-label="展开添加内容" :aria-invalid="draftTooLarge" rows="18" @keydown.stop="handleKeydown" />
+      <div class="editor-status"><span class="editor-hint">{{ draftStorageFailed ? '草稿暂时无法保存，请勿关闭页面' : '草稿自动保存在此设备' }}</span><span class="editor-hint">{{ draftStats.characters.toLocaleString() }} 字符 · {{ formatTextBytes(draftStats.bytes) }} / 1 MiB</span></div>
+      <n-alert v-if="draftTooLarge" type="warning" class="form-alert">{{ textLimitMessage }}</n-alert>
+      <n-alert v-if="error" type="error" class="form-alert">{{ error }}</n-alert>
+      <n-space justify="end" class="tag-modal-actions"><n-button @click="composeExpanded = false">收起</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard">提交文本</n-button></n-space>
+    </n-modal>
+    <n-modal :show="Boolean(editItem)" preset="card" title="编辑内容" class="edit-content-modal workspace-editor-modal" :class="{ 'is-fullscreen': editExpanded }" :mask-closable="false" :close-on-esc="!editSaving" :closable="!editSaving" @update:show="(show: boolean) => { if (!show) closeEditor() }">
+      <div class="editor-topline"><span>{{ editRestored ? '已恢复未提交的修改' : 'Enter 换行 · Ctrl/⌘ + Enter 保存' }}</span><n-button quaternary @click="editExpanded = !editExpanded">{{ editExpanded ? '退出全屏' : '全屏编辑' }}</n-button></div>
       <textarea v-model="editDraft" class="content-editor" aria-label="编辑内容" :aria-invalid="editTooLarge" aria-describedby="edit-editor-status" rows="14" :disabled="editSaving" @keydown.stop="(event: KeyboardEvent) => { if (!event.isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void saveContent() } }" />
       <div id="edit-editor-status" class="editor-status"><span class="editor-hint">Enter 换行 · Ctrl/⌘ + Enter 保存</span><span class="editor-hint">{{ editStats.characters.toLocaleString() }} 字符 · {{ formatTextBytes(editStats.bytes) }} / 1 MiB</span></div>
+      <p v-if="draftStorageFailed" class="draft-warning" role="status">草稿暂时无法保存到此设备，请勿关闭页面。</p>
       <n-alert v-if="editTooLarge" type="warning" class="form-alert">{{ textLimitMessage }}</n-alert>
       <n-alert v-if="editError" type="error" class="form-alert">{{ editError }}</n-alert>
-      <n-space justify="end" class="tag-modal-actions"><n-button :disabled="editSaving" @click="editItem = null">取消</n-button><n-button type="primary" :loading="editSaving" :disabled="!editDraft.trim() || editTooLarge" @click="saveContent">保存</n-button></n-space>
+      <n-space justify="end" class="tag-modal-actions"><n-popconfirm @positive-click="discardEdits"><template #trigger><n-button quaternary :disabled="editSaving">放弃修改</n-button></template>丢弃未保存的修改，恢复已提交的内容？</n-popconfirm><n-button :disabled="editSaving" @click="closeEditor">暂存并关闭</n-button><n-button type="primary" :loading="editSaving" :disabled="!editDraft.trim() || editTooLarge" @click="saveContent">保存</n-button></n-space>
+    </n-modal>
+    <n-modal :show="Boolean(pendingTrash)" preset="card" title="移入回收站" class="confirmation-modal" :mask-closable="!deleting" :closable="!deleting" :close-on-esc="!deleting" @update:show="(show: boolean) => { if (!show && !deleting) pendingTrash = null }">
+      <p>内容和附件会保留，可从回收站恢复。已公开的分享链接将立即失效，恢复内容也不会重新开启。</p>
+      <n-space justify="end"><n-button :disabled="deleting" @click="pendingTrash = null">取消</n-button><n-button type="primary" :loading="deleting" @click="pendingTrash && removeItem(pendingTrash)">确认移入</n-button></n-space>
+    </n-modal>
+    <n-modal :show="Boolean(pendingPurge)" preset="card" title="彻底删除" class="confirmation-modal" :mask-closable="!deleting" :closable="!deleting" :close-on-esc="!deleting" @update:show="(show: boolean) => { if (!show && !deleting) pendingPurge = null }">
+      <p>确认永久删除{{ pendingPurge?.fileName ? `“${pendingPurge.fileName}”及源文件` : '这条内容' }}？此操作无法恢复。</p>
+      <n-space justify="end"><n-button :disabled="deleting" @click="pendingPurge = null">取消</n-button><n-button type="error" :loading="deleting" @click="permanentlyDelete">确认彻底删除</n-button></n-space>
     </n-modal>
     <n-modal v-model:show="tagModalOpen" preset="card" title="整理记录" class="tag-modal" :mask-closable="!tagSaving">
       <label class="organize-field-label" for="clipboard-note">备注</label>
@@ -854,4 +1168,7 @@ onUnmounted(() => {
       <n-space justify="end" class="tag-modal-actions"><n-button :disabled="tagSaving" @click="tagModalOpen = false">取消</n-button><n-button type="primary" :loading="tagSaving" @click="saveTags">保存</n-button></n-space>
     </n-modal>
   </n-layout>
+  <div v-if="feedback && currentUser" class="operation-feedback" :class="feedback.kind" :role="feedback.kind === 'error' ? 'alert' : 'status'">
+    <span>{{ feedback.text }}</span><button v-if="feedback.undoId" type="button" :disabled="trashBusyId !== null" @click="restoreItem(feedback.undoId)">撤销</button><button type="button" aria-label="关闭提示" @click="feedback = null">×</button>
+  </div>
 </template>

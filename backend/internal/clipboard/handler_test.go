@@ -23,6 +23,7 @@ import (
 )
 
 type listCaptureRepo struct {
+	Repository
 	items   []Item
 	userID  int64
 	filter  ListFilter
@@ -334,9 +335,11 @@ func TestHandlerUploadDownloadAndDeleteImage(t *testing.T) {
 	if deleteResponse.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, body = %s", deleteResponse.Code, deleteResponse.Body.String())
 	}
-	if _, err := files.Open(t.Context(), stored.StorageKey); !errors.Is(err, filestore.ErrNotFound) {
-		t.Fatalf("expected stored content deletion, got %v", err)
+	reader, err := files.Open(t.Context(), stored.StorageKey)
+	if err != nil {
+		t.Fatalf("trash must retain source for restoration, got %v", err)
 	}
+	_ = reader.Close()
 }
 
 func TestHandlerRejectsDuplicateAttachmentAndCleansTemporaryObject(t *testing.T) {
@@ -595,14 +598,18 @@ func TestHandlerKeepsAttachmentWhenSourceDeleteFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create attachment: %v", err)
 	}
+	if err := repo.Trash(t.Context(), 1, item.ID); err != nil {
+		t.Fatalf("trash attachment: %v", err)
+	}
 	router := newTestRouterWithStore(repo, deleteFailStore{Store: baseStore, err: errors.New("storage unavailable")}, 1, 100)
 	response := httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodDelete, "/api/clipboard/"+strconv.FormatInt(item.ID, 10), nil))
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodDelete, "/api/trash/"+strconv.FormatInt(item.ID, 10), nil))
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if _, err := repo.Get(t.Context(), 1, item.ID); err != nil {
-		t.Fatalf("metadata should remain retryable, got %v", err)
+	items, err := repo.ListTrash(t.Context(), 1, 100)
+	if err != nil || len(items) != 1 || items[0].ID != item.ID {
+		t.Fatalf("trash should remain retryable, got %#v, %v", items, err)
 	}
 }
 
