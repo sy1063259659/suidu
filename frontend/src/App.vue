@@ -18,6 +18,7 @@ import ClipboardItemContent from './components/ClipboardItemContent.vue'
 import ClipboardDetailPage from './components/ClipboardDetailPage.vue'
 import PublicSharePage from './components/PublicSharePage.vue'
 import { captureResultsHeight, preservedResultsStyle } from './utils/historyLayout'
+import { MAX_TEXT_BYTES, formatTextBytes, textStats } from './utils/textEditor'
 import {
   applyCustomTimeFilter,
   applyTimePreset,
@@ -71,6 +72,11 @@ const editItem = shallowRef<ClipboardItem | null>(null)
 const editDraft = ref('')
 const editSaving = ref(false)
 const editError = ref('')
+const draftStats = computed(() => textStats(draft.value))
+const editStats = computed(() => textStats(editDraft.value))
+const draftTooLarge = computed(() => draftStats.value.bytes > MAX_TEXT_BYTES)
+const editTooLarge = computed(() => editStats.value.bytes > MAX_TEXT_BYTES)
+const textLimitMessage = '文本超过 1 MiB 保存上限，已完整保留在输入框中。请分段保存，或作为 .txt 文件上传。'
 
 function openEditor(item: ClipboardItem) {
   editItem.value = item
@@ -80,7 +86,7 @@ function openEditor(item: ClipboardItem) {
 
 async function saveContent() {
   const item = editItem.value
-  if (!item || editSaving.value || !editDraft.value.trim()) return
+  if (!item || editSaving.value || !editDraft.value.trim() || editTooLarge.value) return
   editSaving.value = true
   editError.value = ''
   try {
@@ -138,7 +144,7 @@ const shareExpiryOptions = [
   { label: '7 天', value: 604800 },
   { label: '30 天', value: 2592000 },
 ]
-const canSubmit = computed(() => draft.value.trim().length > 0 && !submitting.value)
+const canSubmit = computed(() => draft.value.trim().length > 0 && !submitting.value && !draftTooLarge.value)
 const isAdmin = computed(() => currentUser.value?.role === 'admin')
 const isDetailPage = computed(() => detailItemId.value > 0)
 const uploadingCount = computed(() => Object.keys(uploadProgress.value).length)
@@ -414,6 +420,8 @@ function handlePaste(event: ClipboardEvent) {
   if (!currentUser.value || activeView.value !== 'clipboard' || isDetailPage.value || editItem.value || shareModalOpen.value || tagModalOpen.value || passwordFormOpen.value) return
   const clipboard = event.clipboardData
   if (!clipboard) return
+  // Keep the browser's native text paste (including undo) when a clipboard also contains files.
+  if (event.target instanceof HTMLTextAreaElement && clipboard.getData('text/plain')) return
   const files = Array.from(clipboard.files)
   if (!files.length) {
     for (const item of Array.from(clipboard.items)) {
@@ -729,7 +737,7 @@ onUnmounted(() => {
         <main v-else class="clipboard-page">
           <section class="page-intro"><div><p class="eyebrow">CONTENT LIBRARY</p><h1>内容库</h1><p class="intro-copy">在设备之间保存、整理和传递内容。</p></div><n-tag round :bordered="false" type="info">{{ items.length }} 条{{ hasActiveFilters ? '匹配' : '记录' }}
           </n-tag></section>
-          <n-card class="composer-card" :bordered="false"><h2 class="composer-title">添加内容</h2><textarea v-model="draft" class="content-editor" aria-label="添加内容" placeholder="输入或粘贴要传递的文字..." rows="5" maxlength="1048576" @keydown.stop="handleKeydown" /><div class="editor-hint">Enter 换行 · Ctrl/⌘ + Enter 提交</div><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
+          <n-card class="composer-card" :bordered="false"><h2 class="composer-title">添加内容</h2><textarea v-model="draft" class="content-editor" aria-label="添加内容" :aria-invalid="draftTooLarge" aria-describedby="draft-editor-status" placeholder="输入或粘贴要传递的文字..." rows="5" @keydown.stop="handleKeydown" /><div id="draft-editor-status" class="editor-status"><span class="editor-hint">Enter 换行 · Ctrl/⌘ + Enter 提交</span><span class="editor-hint">{{ draftStats.characters.toLocaleString() }} 字符 · {{ formatTextBytes(draftStats.bytes) }} / 1 MiB</span></div><n-alert v-if="draftTooLarge" type="warning" class="form-alert">{{ textLimitMessage }}</n-alert><div class="composer-actions"><n-button secondary @click="readClipboard"><template #icon><ClipboardPaste :size="17" /></template>读取剪贴板</n-button><n-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitClipboard"><template #icon><Send :size="17" /></template>提交文本</n-button></div></n-card>
           <n-card class="upload-card" :bordered="false">
             <n-upload multiple :show-file-list="false" :custom-request="uploadFile">
               <n-upload-dragger><div class="upload-drop-content"><div class="upload-icon"><UploadCloud :size="22" /></div><div><strong>上传图片或文件</strong><span>点击、拖入，或直接 Ctrl+V / ⌘V 粘贴截图，单个不超过 100 MiB</span></div></div></n-upload-dragger>
@@ -831,10 +839,11 @@ onUnmounted(() => {
       </template>
     </n-modal>
     <n-modal :show="Boolean(editItem)" preset="card" title="编辑内容" class="edit-content-modal" :mask-closable="!editSaving" :close-on-esc="!editSaving" :closable="!editSaving" @update:show="(show: boolean) => { if (!show && !editSaving) editItem = null }">
-      <textarea v-model="editDraft" class="content-editor" aria-label="编辑内容" rows="14" maxlength="1048576" :disabled="editSaving" @keydown.stop="(event: KeyboardEvent) => { if (!event.isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void saveContent() } }" />
-      <div class="editor-hint">Enter 换行 · Ctrl/⌘ + Enter 保存</div>
+      <textarea v-model="editDraft" class="content-editor" aria-label="编辑内容" :aria-invalid="editTooLarge" aria-describedby="edit-editor-status" rows="14" :disabled="editSaving" @keydown.stop="(event: KeyboardEvent) => { if (!event.isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void saveContent() } }" />
+      <div id="edit-editor-status" class="editor-status"><span class="editor-hint">Enter 换行 · Ctrl/⌘ + Enter 保存</span><span class="editor-hint">{{ editStats.characters.toLocaleString() }} 字符 · {{ formatTextBytes(editStats.bytes) }} / 1 MiB</span></div>
+      <n-alert v-if="editTooLarge" type="warning" class="form-alert">{{ textLimitMessage }}</n-alert>
       <n-alert v-if="editError" type="error" class="form-alert">{{ editError }}</n-alert>
-      <n-space justify="end" class="tag-modal-actions"><n-button :disabled="editSaving" @click="editItem = null">取消</n-button><n-button type="primary" :loading="editSaving" :disabled="!editDraft.trim()" @click="saveContent">保存</n-button></n-space>
+      <n-space justify="end" class="tag-modal-actions"><n-button :disabled="editSaving" @click="editItem = null">取消</n-button><n-button type="primary" :loading="editSaving" :disabled="!editDraft.trim() || editTooLarge" @click="saveContent">保存</n-button></n-space>
     </n-modal>
     <n-modal v-model:show="tagModalOpen" preset="card" title="整理记录" class="tag-modal" :mask-closable="!tagSaving">
       <label class="organize-field-label" for="clipboard-note">备注</label>
